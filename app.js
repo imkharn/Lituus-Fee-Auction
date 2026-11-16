@@ -228,38 +228,41 @@
       (bluffDisabled ? ' checked' : '') + '> Disable Bluff-Caller</label>';
   }
 
+  function bluffHead() {
+    return '<div class="card-head"><h2>Bluff-caller</h2>' + bluffToggle() + '</div>';
+  }
+
   function bluffHtml(model) {
     var best = model.bestBluff;
-    var toggle = bluffToggle();
+    var head = bluffHead();
     if (!best) {
-      return '<article class="card" data-testid="bluff-card"><h2>Bluff-caller</h2>' + toggle +
+      return '<article class="card" data-testid="bluff-card">' + head +
         '<p data-testid="bluff-reason">' + esc(bluffReason(model)) + '</p></article>';
     }
     if (bluffDisabled) {
-      return '<article class="card" data-testid="bluff-card"><h2>Bluff-caller</h2>' + toggle +
+      return '<article class="card" data-testid="bluff-card">' + head +
         '<p data-testid="bluff-disabled">A bluff-caller will not show up even though its profitable to do so</p></article>';
     }
     var others = model.rationalBluffs.length - 1;
     var more = others > 0
-      ? '<p class="sub">' + others + (others === 1 ? ' other price earns less profit.' : ' other prices earn less profit.') + '</p>'
+      ? ' ' + others + (others === 1 ? ' other price earns less profit.' : ' other prices earn less profit.')
       : '';
     var bidQty = best.quantity > 0 ? best.quantity : best.delta;
     var tokens = Math.round(bidQty);
     var markets = Math.round(best.leftover);
     var tokenWord = tokens === 1 ? 'query token' : 'query tokens';
     var marketWord = markets === 1 ? 'market' : 'markets';
-    return '<article class="card" data-testid="bluff-card"><h2>Bluff-caller</h2>' + toggle +
+    return '<article class="card" data-testid="bluff-card">' + head +
       '<p data-testid="bluff-call">Bids enough (' + qty(bidQty) + ' ' + tokenWord + ') on the ' + money(best.price) +
       ' price to cause that price to win, then resells at ' + money(best.sellPrice) +
       '. They are able to sell at this price because other bidders lied about demand and there are still ' +
-      qty(best.leftover) + ' ' + marketWord + ' that are profitable to create at this price.</p>' +
+      qty(best.leftover) + ' ' + marketWord + ' that are profitable to create at this price.' + more + '</p>' +
       '<div class="stats">' +
       '<div class="stat"><span>Spend</span><b data-testid="bluff-spend">' + money(best.spend) + '</b></div>' +
       '<div class="stat"><span>Resale price</span><b data-testid="bluff-sell">' + money(best.sellPrice) + '</b></div>' +
       '<div class="stat"><span>Profit</span><b data-testid="bluff-profit">' + money(best.profit) + '</b></div>' +
       '<div class="stat"><span>ROI</span><b data-testid="bluff-roi">' + percent(best.roi) + '</b></div>' +
-      '</div>' +
-      more + '</article>';
+      '</div></article>';
   }
 
   function tableHtml(model) {
@@ -435,11 +438,11 @@
       '</div>' +
       tableHtml(model) +
       bluffHtml(model) +
+      honestyHtml(model) +
       '<article class="card chart-card"><h2>True demand and burn</h2>' + chartSvg(model) +
       '<ul class="legend"><li><i class="swatch"></i> Demand</li><li><i class="swatch burn"></i> REP burn</li>' +
       '<li><i class="swatch arm"></i> Arms</li><li><i class="swatch current"></i> Current fee</li>' +
-      '<li><i class="swatch dot"></i> Selected</li><li><i class="swatch diamond"></i> Optimal</li></ul></article>' +
-      honestyHtml(model);
+      '<li><i class="swatch dot"></i> Selected</li><li><i class="swatch diamond"></i> Optimal</li></ul></article>';
   }
 
   function knotsForCalc() {
