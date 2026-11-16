@@ -31,7 +31,7 @@
     polymarket: {
       name: 'Polymarket-like open interest',
       C: 40,
-      h: 0.5,
+      h: 0.75,
       k: 0.25,
       creatorPercent: 0.07,
       knots: [

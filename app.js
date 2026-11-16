@@ -5,7 +5,8 @@
   var preset = A.PRESETS.polymarket;
   var baseKnots = A.cloneKnots(preset.knots);
   var demandPercent = 10;
-  var priceSensitivity = 50;
+  var sensitivityAbove = 50;
+  var sensitivityBelow = 50;
   var C = preset.C;
   var h = preset.h;
   var k = preset.k;
@@ -42,8 +43,7 @@
     return rounded >= 0.1 ? rounded.toFixed(2) : rounded.toFixed(3);
   }
 
-  /* 50 is neutral. Slider maps to a single blend amount so a small nudge
-     moves every price a little, instead of slamming distant prices flat. */
+  /* 50 is neutral. Each side of the optimum has its own blend amount. */
   function sensitivityBlend(position) {
     var t = (Number(position) - 50) / 50;
     if (!isFinite(t)) return 0;
@@ -57,8 +57,8 @@
     return 'higher';
   }
 
-  /* Left of p*: mild downward slope. Right of p*: steeper drop. Both pass
-     through D(p*), so the revenue-maximizing fee stays put. */
+  /* Below p*: mild downward slope. Above p*: steeper drop. Both pass through
+     D(p*), so the revenue-maximizing fee stays put. */
   var SENSITIVITY_LEFT_E = 0.45;
   var SENSITIVITY_RIGHT_E = 2.4;
 
@@ -67,29 +67,37 @@
     return qStar * Math.pow(pStar / Math.max(price, 1e-9), e);
   }
 
+  function blendForPrice(price, pStar, blendBelow, blendAbove) {
+    if (price < pStar) return blendBelow;
+    if (price > pStar) return blendAbove;
+    return 0;
+  }
+
   /* Reshape around the revenue-maximizing fee. Demand there stays put.
-     Higher sensitivity blends the whole curve toward a sloping target with
-     a sharper burn peak. Lower sensitivity blends toward 1/p demand. */
-  function reshapeAroundPeak(rows, blend) {
+     Each slider blends only its side of the curve. */
+  function reshapeAroundPeak(rows, blendBelow, blendAbove) {
     if (!rows.length) return [];
     var shaped = rows.map(function (knot) {
       return { price: knot.price, qty: knot.qty };
     });
-    if (Math.abs(blend) < 1e-12) return shaped;
+    if (Math.abs(blendBelow) < 1e-12 && Math.abs(blendAbove) < 1e-12) return shaped;
     var peak = A.optimalFee(shaped);
     if (!peak || !(peak.price > 0)) return shaped;
     var pStar = peak.price;
     var qStar = Math.max(0, peak.quantity);
     var flatBurn = pStar * qStar;
     shaped = shaped.map(function (knot) {
-      var qty;
-      if (blend > 0) {
-        var target = sensitivityTargetQty(knot.price, pStar, qStar);
-        qty = (1 - blend) * knot.qty + blend * target;
-      } else {
-        var alpha = Math.min(0.85, -blend);
-        var flatQty = flatBurn / knot.price;
-        qty = (1 - alpha) * knot.qty + alpha * flatQty;
+      var blend = blendForPrice(knot.price, pStar, blendBelow, blendAbove);
+      var qty = knot.qty;
+      if (Math.abs(blend) >= 1e-12) {
+        if (blend > 0) {
+          var target = sensitivityTargetQty(knot.price, pStar, qStar);
+          qty = (1 - blend) * knot.qty + blend * target;
+        } else {
+          var alpha = Math.min(0.85, -blend);
+          var flatQty = flatBurn / knot.price;
+          qty = (1 - alpha) * knot.qty + alpha * flatQty;
+        }
       }
       return { price: knot.price, qty: Math.max(0, qty) };
     });
@@ -105,8 +113,9 @@
   }
 
   function unshapeDisplayed(displayed) {
-    var blend = sensitivityBlend(priceSensitivity);
-    if (!displayed.length || Math.abs(blend) < 1e-12) {
+    var blendBelow = sensitivityBlend(sensitivityBelow);
+    var blendAbove = sensitivityBlend(sensitivityAbove);
+    if (!displayed.length || (Math.abs(blendBelow) < 1e-12 && Math.abs(blendAbove) < 1e-12)) {
       return displayed.map(function (knot) {
         return { price: knot.price, qty: knot.qty };
       });
@@ -122,14 +131,17 @@
     var qStar = Math.max(0, peak.quantity);
     var flatBurn = pStar * qStar;
     return displayed.map(function (knot) {
-      var qty;
-      if (blend > 0) {
-        var target = sensitivityTargetQty(knot.price, pStar, qStar);
-        qty = blend < 0.999 ? (knot.qty - blend * target) / (1 - blend) : knot.qty;
-      } else {
-        var alpha = Math.min(0.85, -blend);
-        var flatQty = flatBurn / Math.max(knot.price, 1e-9);
-        qty = alpha < 0.999 ? (knot.qty - alpha * flatQty) / (1 - alpha) : knot.qty;
+      var blend = blendForPrice(knot.price, pStar, blendBelow, blendAbove);
+      var qty = knot.qty;
+      if (Math.abs(blend) >= 1e-12) {
+        if (blend > 0) {
+          var target = sensitivityTargetQty(knot.price, pStar, qStar);
+          qty = blend < 0.999 ? (knot.qty - blend * target) / (1 - blend) : knot.qty;
+        } else {
+          var alpha = Math.min(0.85, -blend);
+          var flatQty = flatBurn / Math.max(knot.price, 1e-9);
+          qty = alpha < 0.999 ? (knot.qty - alpha * flatQty) / (1 - alpha) : knot.qty;
+        }
       }
       return { price: knot.price, qty: Math.max(0, qty) };
     });
@@ -152,7 +164,11 @@
   }
 
   function projectKnots() {
-    return reshapeAroundPeak(scaleOnlyKnots(), sensitivityBlend(priceSensitivity));
+    return reshapeAroundPeak(
+      scaleOnlyKnots(),
+      sensitivityBlend(sensitivityBelow),
+      sensitivityBlend(sensitivityAbove)
+    );
   }
 
   function adoptDisplayed(displayed) {
@@ -183,7 +199,8 @@
   var creatorNumber = document.getElementById('creator-number');
   var demandRange = document.getElementById('demand-range');
   var demandNumber = document.getElementById('demand-number');
-  var sensitivityRange = document.getElementById('sensitivity-range');
+  var sensitivityAboveRange = document.getElementById('sensitivity-above-range');
+  var sensitivityBelowRange = document.getElementById('sensitivity-below-range');
   var knotTable = document.getElementById('knots');
 
   document.getElementById('controls').addEventListener('submit', function (event) {
@@ -717,16 +734,28 @@
     demandNumber.value = formatWhole(demandPercent);
   });
 
-  function setPriceSensitivity(position) {
-    priceSensitivity = Math.min(100, Math.max(0, Math.round(Number(position))));
-    if (!isFinite(priceSensitivity)) priceSensitivity = 50;
-    sensitivityRange.value = String(priceSensitivity);
-    sensitivityRange.setAttribute('aria-valuetext', sensitivityLabel(priceSensitivity));
+  function setSensitivityAbove(position) {
+    sensitivityAbove = Math.min(100, Math.max(0, Math.round(Number(position))));
+    if (!isFinite(sensitivityAbove)) sensitivityAbove = 50;
+    sensitivityAboveRange.value = String(sensitivityAbove);
+    sensitivityAboveRange.setAttribute('aria-valuetext', sensitivityLabel(sensitivityAbove));
     knots = projectKnots();
     renderKnots();
   }
-  sensitivityRange.addEventListener('input', function () {
-    setPriceSensitivity(sensitivityRange.value);
+  function setSensitivityBelow(position) {
+    sensitivityBelow = Math.min(100, Math.max(0, Math.round(Number(position))));
+    if (!isFinite(sensitivityBelow)) sensitivityBelow = 50;
+    sensitivityBelowRange.value = String(sensitivityBelow);
+    sensitivityBelowRange.setAttribute('aria-valuetext', sensitivityLabel(sensitivityBelow));
+    knots = projectKnots();
+    renderKnots();
+  }
+  sensitivityAboveRange.addEventListener('input', function () {
+    setSensitivityAbove(sensitivityAboveRange.value);
+    render();
+  });
+  sensitivityBelowRange.addEventListener('input', function () {
+    setSensitivityBelow(sensitivityBelowRange.value);
     render();
   });
 
@@ -860,7 +889,9 @@
     var creatorPercent = next.creatorPercent == null ? 1 : next.creatorPercent;
     creatorFee = creatorPercent / 100;
     demandPercent = 10;
-    priceSensitivity = 50;
+    sensitivityAbove = 50;
+    sensitivityBelow = 50;
+    bluffDisabled = false;
     baseKnots = A.cloneKnots(next.knots);
     knots = projectKnots();
     fee.value = formatWhole(C);
@@ -872,8 +903,10 @@
     creatorNumber.value = formatCreator(creatorPercent);
     demandRange.value = '10';
     demandNumber.value = '10';
-    sensitivityRange.value = '50';
-    sensitivityRange.setAttribute('aria-valuetext', 'neutral');
+    sensitivityAboveRange.value = '50';
+    sensitivityAboveRange.setAttribute('aria-valuetext', 'neutral');
+    sensitivityBelowRange.value = '50';
+    sensitivityBelowRange.setAttribute('aria-valuetext', 'neutral');
     clearNote();
     hideKnotError();
     renderKnots();
