@@ -101,6 +101,14 @@
       padding: 5px 10px;
     }
     .pair { display: grid; grid-template-columns: minmax(0, 1fr) 108px; gap: 10px; align-items: center; }
+    .sensitivity-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
     .pct { position: relative; }
     .pct input { padding-right: 22px; }
     .pct-sign {
@@ -314,7 +322,15 @@
             <tbody></tbody>
           </table>
         </div>
-        <p class="assist">Between prices, demand is log-linear in log price, so each segment has constant elasticity. A segment that touches zero demand is linear in demand instead. Outside the end prices, the curve continues that end segment.</p>
+        <div class="field">
+          <label class="field-label" for="sensitivity-range">Price sensitivity</label>
+          <div class="sensitivity-row">
+            <span aria-hidden="true">Lower</span>
+            <input id="sensitivity-range" type="range" min="0" max="100" step="1" value="50" aria-describedby="sensitivity-help" aria-valuetext="neutral">
+            <span aria-hidden="true">Higher</span>
+          </div>
+        </div>
+        <p id="sensitivity-help" class="assist">Reshapes demand around the revenue-maximizing fee without moving that fee. Right sharpens the REP burn peak; left leaves more demand at distant prices.</p>
         <p id="knot-note" class="note" hidden></p>
         <p id="knot-error" class="note error" hidden></p>
         <div class="toolbar">

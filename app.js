@@ -5,6 +5,7 @@
   var preset = A.PRESETS.polymarket;
   var baseKnots = A.cloneKnots(preset.knots);
   var demandPercent = 10;
+  var priceSensitivity = 50;
   var C = preset.C;
   var h = preset.h;
   var k = preset.k;
@@ -41,9 +42,97 @@
     return rounded >= 0.1 ? rounded.toFixed(2) : rounded.toFixed(3);
   }
 
+  /* 50 is neutral. Below that flattens burn; above that concentrates it around p*. */
+  function sensitivityStrength(position) {
+    var t = (Number(position) - 50) / 50;
+    if (!isFinite(t)) return 0;
+    return t < 0 ? t : t * 5;
+  }
+
+  function sensitivityLabel(position) {
+    var value = Math.round(Number(position));
+    if (value === 50) return 'neutral';
+    if (value < 50) return 'lower';
+    return 'higher';
+  }
+
+  /* Reshape around the revenue-maximizing fee. Demand there stays put.
+     Higher sensitivity pulls left-side excess demand down toward D(p*) and
+     scales right-side demand down. Lower sensitivity blends toward 1/p
+     demand, which flattens REP burn. */
+  function reshapeAroundPeak(rows, strength) {
+    if (!rows.length) return [];
+    var shaped = rows.map(function (knot) {
+      return { price: knot.price, qty: knot.qty };
+    });
+    if (Math.abs(strength) < 1e-12) return shaped;
+    var peak = A.optimalFee(shaped);
+    if (!peak || !(peak.price > 0)) return shaped;
+    var pStar = peak.price;
+    var qStar = Math.max(0, peak.quantity);
+    var flatBurn = pStar * qStar;
+    shaped = shaped.map(function (knot) {
+      var qty;
+      if (strength > 0) {
+        var dist = Math.log(knot.price / pStar);
+        var weight = Math.exp(-strength * dist * dist);
+        if (knot.price <= pStar) qty = qStar + (knot.qty - qStar) * weight;
+        else qty = knot.qty * weight;
+      } else {
+        var alpha = Math.min(0.85, -strength);
+        var flatQty = flatBurn / knot.price;
+        qty = (1 - alpha) * knot.qty + alpha * flatQty;
+      }
+      return { price: knot.price, qty: Math.max(0, qty) };
+    });
+    shaped = shaped.map(function (knot) {
+      return { price: knot.price, qty: Math.max(0, Math.round(knot.qty)) };
+    });
+    for (var i = 0; i < shaped.length - 1; i++) {
+      if (shaped[i + 1].qty > shaped[i].qty) shaped[i + 1].qty = shaped[i].qty;
+    }
+    return shaped;
+  }
+
+  function unshapeDisplayed(displayed) {
+    var strength = sensitivityStrength(priceSensitivity);
+    if (!displayed.length || Math.abs(strength) < 1e-12) {
+      return displayed.map(function (knot) {
+        return { price: knot.price, qty: knot.qty };
+      });
+    }
+    var neutral = scaleOnlyKnots();
+    var peak = A.optimalFee(neutral);
+    if (!peak || !(peak.price > 0)) {
+      return displayed.map(function (knot) {
+        return { price: knot.price, qty: knot.qty };
+      });
+    }
+    var pStar = peak.price;
+    var qStar = Math.max(0, peak.quantity);
+    var flatBurn = pStar * qStar;
+    return displayed.map(function (knot) {
+      var qty;
+      if (strength > 0) {
+        var dist = Math.log(Math.max(knot.price, 1e-9) / pStar);
+        var weight = Math.exp(-strength * dist * dist);
+        if (knot.price <= pStar) {
+          qty = weight > 1e-9 ? qStar + (knot.qty - qStar) / weight : knot.qty;
+        } else {
+          qty = weight > 1e-9 ? knot.qty / weight : knot.qty;
+        }
+      } else {
+        var alpha = Math.min(0.85, -strength);
+        var flatQty = flatBurn / Math.max(knot.price, 1e-9);
+        qty = alpha < 0.999 ? (knot.qty - alpha * flatQty) / (1 - alpha) : knot.qty;
+      }
+      return { price: knot.price, qty: Math.max(0, qty) };
+    });
+  }
+
   /* Prices in the table are the prices the auction uses. The stored curve is
      the 1% creator-fee book; the slider scales those prices onto the page. */
-  function projectKnots() {
+  function scaleOnlyKnots() {
     var ps = priceScale();
     var qs = demandFactor();
     var rows = [];
@@ -57,10 +146,15 @@
     return rows;
   }
 
+  function projectKnots() {
+    return reshapeAroundPeak(scaleOnlyKnots(), sensitivityStrength(priceSensitivity));
+  }
+
   function adoptDisplayed(displayed) {
     var ps = priceScale();
     var qs = demandFactor();
-    baseKnots = displayed.map(function (knot) {
+    var neutral = unshapeDisplayed(displayed);
+    baseKnots = neutral.map(function (knot) {
       return {
         price: ps > 0 ? knot.price / ps : knot.price,
         qty: qs > 0 ? knot.qty / qs : knot.qty
@@ -84,6 +178,7 @@
   var creatorNumber = document.getElementById('creator-number');
   var demandRange = document.getElementById('demand-range');
   var demandNumber = document.getElementById('demand-number');
+  var sensitivityRange = document.getElementById('sensitivity-range');
   var knotTable = document.getElementById('knots');
 
   document.getElementById('controls').addEventListener('submit', function (event) {
@@ -341,7 +436,7 @@
     }
 
     var parts = [];
-    parts.push('<svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Demand and REP burn. Optimal fee ' +
+    parts.push('<svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Profit and demand curves. Optimal fee ' +
       money(model.pStar.price) + ', selected fee ' + money(model.winner.price) + '.">');
     parts.push('<rect width="' + width + '" height="' + height + '" fill="#faf6ee"/>');
 
@@ -439,7 +534,7 @@
       tableHtml(model) +
       bluffHtml(model) +
       honestyHtml(model) +
-      '<article class="card chart-card"><h2>True demand and burn</h2>' + chartSvg(model) +
+      '<article class="card chart-card"><h2>Profit and Demand Curves</h2>' + chartSvg(model) +
       '<ul class="legend"><li><i class="swatch"></i> Demand</li><li><i class="swatch burn"></i> REP burn</li>' +
       '<li><i class="swatch arm"></i> Arms</li><li><i class="swatch current"></i> Current fee</li>' +
       '<li><i class="swatch dot"></i> Selected</li><li><i class="swatch diamond"></i> Optimal</li></ul></article>';
@@ -617,6 +712,19 @@
     demandNumber.value = formatWhole(demandPercent);
   });
 
+  function setPriceSensitivity(position) {
+    priceSensitivity = Math.min(100, Math.max(0, Math.round(Number(position))));
+    if (!isFinite(priceSensitivity)) priceSensitivity = 50;
+    sensitivityRange.value = String(priceSensitivity);
+    sensitivityRange.setAttribute('aria-valuetext', sensitivityLabel(priceSensitivity));
+    knots = projectKnots();
+    renderKnots();
+  }
+  sensitivityRange.addEventListener('input', function () {
+    setPriceSensitivity(sensitivityRange.value);
+    render();
+  });
+
   function steppedWhole(value, up, minimum) {
     var current = Math.round(Number(value));
     if (!isFinite(current)) current = minimum;
@@ -747,6 +855,7 @@
     var creatorPercent = next.creatorPercent == null ? 1 : next.creatorPercent;
     creatorFee = creatorPercent / 100;
     demandPercent = 10;
+    priceSensitivity = 50;
     baseKnots = A.cloneKnots(next.knots);
     knots = projectKnots();
     fee.value = formatWhole(C);
@@ -758,6 +867,8 @@
     creatorNumber.value = formatCreator(creatorPercent);
     demandRange.value = '10';
     demandNumber.value = '10';
+    sensitivityRange.value = '50';
+    sensitivityRange.setAttribute('aria-valuetext', 'neutral');
     clearNote();
     hideKnotError();
     renderKnots();
