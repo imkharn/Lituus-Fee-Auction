@@ -390,20 +390,23 @@
     var value = percent(model.hStar);
     var optimal = money(model.hStarPick.price);
     var detail = 'If this percent of bidders are honest, the auction successfully selects the optimal price (' + optimal + ') even without a bluff-caller.';
-    var floor;
+    var floor = '';
     if (model.hBluff == null) {
       floor = 'Even with a bluff-caller helping, no honest share selects the optimal price.';
     } else if (model.hBluff === 0) {
       floor = 'With a bluff-caller helping, the auction will select the optimal price (' +
         money(model.hBluffPick.price) + ') even if all bidders lie.';
-    } else {
+    } else if (model.hBluff !== model.hStar) {
       floor = 'The percent honest would have to be below ' + percent(model.hBluff) +
         ' to not select the optimal price even with a bluff-caller helping.';
     }
     return '<article class="card"><h2 class="sentence">Honesty threshold where controller works perfectly even without a bluff-caller</h2>' +
       '<p class="hero-value" style="font-size:40px" data-testid="hstar">' + esc(value) + '</p>' +
       '<p class="sub" data-testid="hstar-note">' + esc(detail) + '</p>' +
-      '<p class="sub" data-testid="bluff-floor">' + esc(floor) + '</p></article>';
+      (floor
+        ? '<p class="sub" data-testid="bluff-floor">' + esc(floor) + '</p>'
+        : '') +
+      '</article>';
   }
 
   function bluffToggle() {
