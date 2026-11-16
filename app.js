@@ -244,6 +244,24 @@
   });
 
   function money(n) {
+    if (!isFinite(n)) n = 0;
+    var abs = Math.abs(n);
+    if (abs > 0 && abs < 1) {
+      var dimes = Math.round(n * 10) / 10;
+      if (Math.abs(dimes) >= 1) {
+        return Math.round(dimes).toLocaleString('en-US', {
+          style: 'currency',
+          currency: 'USD',
+          maximumFractionDigits: 0
+        });
+      }
+      return dimes.toLocaleString('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
     return Math.round(n).toLocaleString('en-US', {
       style: 'currency',
       currency: 'USD',
@@ -285,6 +303,11 @@
     }
     if (v >= 1e6) return unit(1e6, 'M');
     if (v >= 1e3) return unit(1e3, 'k');
+    if (v > 0 && v < 1) {
+      var dimes = Math.round(v * 10) / 10;
+      if (dimes >= 1) return sign + '1';
+      return sign + dimes.toFixed(2);
+    }
     return sign + String(Math.round(v));
   }
 
