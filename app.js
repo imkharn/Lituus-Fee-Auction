@@ -50,11 +50,16 @@
     return rounded >= 0.1 ? rounded.toFixed(2) : rounded.toFixed(3);
   }
 
-  /* 50 is neutral. Each slider maps to u in [-1, 1]. */
-  function sensitivityUnit(position) {
+  /* 50 is neutral. Each side of the optimum has its own blend amount.
+     Below-optimum uses twice the base span; both sides then get +50% range. */
+  function sensitivityBlend(position) {
     var t = (Number(position) - 50) / 50;
     if (!isFinite(t)) return 0;
-    return Math.max(-1, Math.min(1, t));
+    return Math.max(-1, Math.min(1, t)) * 1.5;
+  }
+
+  function sensitivityBlendBelow(position) {
+    return sensitivityBlend(position) * 2;
   }
 
   function sensitivityLabel(position) {
@@ -64,107 +69,124 @@
     return 'higher';
   }
 
-  /* Log-distance weight from p*. Cutting uses the cumulative weight; raising
-     demand multiplies by a far fade so the expensive/cheap tails do not run away.
-     Tuned so default Polymarket @ 0.07%/10%: min-above ≈400 at $56, max-below ≈500 at $28. */
-  var SENSITIVITY_SIGMA = 0.18;
-  var SENSITIVITY_FAR = 0.85;
-  var SENSITIVITY_E_ABOVE_LO = 0.05;
-  var SENSITIVITY_E_ABOVE_HI = 3.2;
-  var SENSITIVITY_E_BELOW_LO = 1.5;
-  var SENSITIVITY_E_BELOW_HI = 0.15;
+  /* Reshape fades in with log-distance from p*, so revenue stays rounded near
+     the peak and the sliders bite harder farther out (more bell-like burn).
+     Sigma ~0.38 moves the $28 / $56 neighbors enough at the extremes while
+     still keeping p* put; the above-min raise target is unit-elastic flat burn
+     (the most demand we can add above p* without moving the optimum). */
+  var SENSITIVITY_SIGMA = 0.38;
+  var SENSITIVITY_ABOVE_MAX = 1.5;
+  var SENSITIVITY_BELOW_MAX = 3;
 
   function logDistanceWeight(price, pStar) {
     if (!(price > 0) || !(pStar > 0)) return 0;
-    var x = Math.abs(Math.log(price / pStar));
-    return 1 - Math.exp(-x / SENSITIVITY_SIGMA);
-  }
-
-  function raiseDistanceWeight(price, pStar) {
-    if (!(price > 0) || !(pStar > 0)) return 0;
-    var x = Math.abs(Math.log(price / pStar));
-    return logDistanceWeight(price, pStar) * Math.exp(-(x * x) / (SENSITIVITY_FAR * SENSITIVITY_FAR));
+    var x = Math.log(price / pStar);
+    return 1 - Math.exp(-(x * x) / (2 * SENSITIVITY_SIGMA * SENSITIVITY_SIGMA));
   }
 
   function sensitivityTargetQty(price, pStar, qStar, elasticity) {
     return qStar * Math.pow(pStar / Math.max(price, 1e-9), elasticity);
   }
 
-  function sideElasticity(unit, lo, hi) {
-    return unit >= 0 ? hi : lo;
+  function aboveElasticity(blend) {
+    var t = Math.min(1, Math.max(0, blend / SENSITIVITY_ABOVE_MAX));
+    return 1.15 + t * 3.0;
   }
 
-  function blendToward(qty, target, mix) {
-    var m = Math.min(0.98, Math.max(0, mix));
-    return (1 - m) * qty + m * target;
+  function belowElasticity(blend) {
+    var t = Math.min(1, Math.max(0, blend / SENSITIVITY_BELOW_MAX));
+    return 0.55 - t * 0.5;
   }
 
-  function unblendToward(qty, target, mix) {
-    var m = Math.min(0.98, Math.max(0, mix));
-    if (m >= 0.999) return qty;
-    return (qty - m * target) / (1 - m);
+  function sideStrength(blend, maxBlend) {
+    return Math.min(0.95, Math.abs(blend) / maxBlend);
   }
 
-  function reshapeQty(qty, price, pStar, qStar, unitBelow, unitAbove) {
+  function blendToward(qty, target, strength, weight) {
+    var mix = Math.min(0.95, Math.max(0, strength) * Math.max(0, weight));
+    return (1 - mix) * qty + mix * target;
+  }
+
+  function unblendToward(qty, target, strength, weight) {
+    var mix = Math.min(0.95, Math.max(0, strength) * Math.max(0, weight));
+    if (mix >= 0.999) return qty;
+    return (qty - mix * target) / (1 - mix);
+  }
+
+  function reshapeQty(qty, price, pStar, qStar, blendBelow, blendAbove) {
     if (!(price > 0) || !(pStar > 0)) return qty;
-    if (price > pStar && Math.abs(unitAbove) >= 1e-12) {
-      var eAbove = sideElasticity(unitAbove, SENSITIVITY_E_ABOVE_LO, SENSITIVITY_E_ABOVE_HI);
-      var wAbove = unitAbove > 0 ? logDistanceWeight(price, pStar) : raiseDistanceWeight(price, pStar);
-      return blendToward(
-        qty,
-        sensitivityTargetQty(price, pStar, qStar, eAbove),
-        Math.abs(unitAbove) * wAbove
-      );
+    var weight = logDistanceWeight(price, pStar);
+    if (weight < 1e-12) return qty;
+    var flatQty = (pStar * qStar) / Math.max(price, 1e-9);
+    if (price > pStar && Math.abs(blendAbove) >= 1e-12) {
+      if (blendAbove > 0) {
+        return blendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, aboveElasticity(blendAbove)),
+          sideStrength(blendAbove, SENSITIVITY_ABOVE_MAX),
+          weight
+        );
+      }
+      return blendToward(qty, flatQty, sideStrength(blendAbove, SENSITIVITY_ABOVE_MAX), weight);
     }
-    if (price < pStar && Math.abs(unitBelow) >= 1e-12) {
-      var eBelow = sideElasticity(unitBelow, SENSITIVITY_E_BELOW_LO, SENSITIVITY_E_BELOW_HI);
-      var wBelow = unitBelow > 0 ? logDistanceWeight(price, pStar) : raiseDistanceWeight(price, pStar);
-      return blendToward(
-        qty,
-        sensitivityTargetQty(price, pStar, qStar, eBelow),
-        Math.abs(unitBelow) * wBelow
-      );
+    if (price < pStar && Math.abs(blendBelow) >= 1e-12) {
+      if (blendBelow > 0) {
+        return blendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, belowElasticity(blendBelow)),
+          sideStrength(blendBelow, SENSITIVITY_BELOW_MAX),
+          weight
+        );
+      }
+      return blendToward(qty, flatQty, sideStrength(blendBelow, SENSITIVITY_BELOW_MAX), weight);
     }
     return qty;
   }
 
-  function unshapeQty(qty, price, pStar, qStar, unitBelow, unitAbove) {
+  function unshapeQty(qty, price, pStar, qStar, blendBelow, blendAbove) {
     if (!(price > 0) || !(pStar > 0)) return qty;
-    if (price > pStar && Math.abs(unitAbove) >= 1e-12) {
-      var eAbove = sideElasticity(unitAbove, SENSITIVITY_E_ABOVE_LO, SENSITIVITY_E_ABOVE_HI);
-      var wAbove = unitAbove > 0 ? logDistanceWeight(price, pStar) : raiseDistanceWeight(price, pStar);
-      return unblendToward(
-        qty,
-        sensitivityTargetQty(price, pStar, qStar, eAbove),
-        Math.abs(unitAbove) * wAbove
-      );
+    var weight = logDistanceWeight(price, pStar);
+    if (weight < 1e-12) return qty;
+    var flatQty = (pStar * qStar) / Math.max(price, 1e-9);
+    if (price > pStar && Math.abs(blendAbove) >= 1e-12) {
+      if (blendAbove > 0) {
+        return unblendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, aboveElasticity(blendAbove)),
+          sideStrength(blendAbove, SENSITIVITY_ABOVE_MAX),
+          weight
+        );
+      }
+      return unblendToward(qty, flatQty, sideStrength(blendAbove, SENSITIVITY_ABOVE_MAX), weight);
     }
-    if (price < pStar && Math.abs(unitBelow) >= 1e-12) {
-      var eBelow = sideElasticity(unitBelow, SENSITIVITY_E_BELOW_LO, SENSITIVITY_E_BELOW_HI);
-      var wBelow = unitBelow > 0 ? logDistanceWeight(price, pStar) : raiseDistanceWeight(price, pStar);
-      return unblendToward(
-        qty,
-        sensitivityTargetQty(price, pStar, qStar, eBelow),
-        Math.abs(unitBelow) * wBelow
-      );
+    if (price < pStar && Math.abs(blendBelow) >= 1e-12) {
+      if (blendBelow > 0) {
+        return unblendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, belowElasticity(blendBelow)),
+          sideStrength(blendBelow, SENSITIVITY_BELOW_MAX),
+          weight
+        );
+      }
+      return unblendToward(qty, flatQty, sideStrength(blendBelow, SENSITIVITY_BELOW_MAX), weight);
     }
     return qty;
   }
 
   /* Reshape around the revenue-maximizing fee. Demand there stays put.
      Each slider blends only its side, weighted by distance from the peak. */
-  function reshapeAroundPeak(rows, unitBelow, unitAbove) {
+  function reshapeAroundPeak(rows, blendBelow, blendAbove) {
     if (!rows.length) return [];
     var shaped = rows.map(function (knot) {
       return { price: knot.price, qty: knot.qty };
     });
-    if (Math.abs(unitBelow) < 1e-12 && Math.abs(unitAbove) < 1e-12) return shaped;
+    if (Math.abs(blendBelow) < 1e-12 && Math.abs(blendAbove) < 1e-12) return shaped;
     var peak = A.optimalFee(shaped);
     if (!peak || !(peak.price > 0)) return shaped;
     var pStar = peak.price;
     var qStar = Math.max(0, peak.quantity);
     shaped = shaped.map(function (knot) {
-      var qty = reshapeQty(knot.qty, knot.price, pStar, qStar, unitBelow, unitAbove);
+      var qty = reshapeQty(knot.qty, knot.price, pStar, qStar, blendBelow, blendAbove);
       return { price: knot.price, qty: Math.max(0, qty) };
     });
     shaped = shaped.map(function (knot) {
@@ -179,9 +201,9 @@
   }
 
   function unshapeDisplayed(displayed) {
-    var unitBelow = sensitivityUnit(sensitivityBelow);
-    var unitAbove = sensitivityUnit(sensitivityAbove);
-    if (!displayed.length || (Math.abs(unitBelow) < 1e-12 && Math.abs(unitAbove) < 1e-12)) {
+    var blendBelow = sensitivityBlendBelow(sensitivityBelow);
+    var blendAbove = sensitivityBlend(sensitivityAbove);
+    if (!displayed.length || (Math.abs(blendBelow) < 1e-12 && Math.abs(blendAbove) < 1e-12)) {
       return displayed.map(function (knot) {
         return { price: knot.price, qty: knot.qty };
       });
@@ -196,7 +218,7 @@
     var pStar = peak.price;
     var qStar = Math.max(0, peak.quantity);
     return displayed.map(function (knot) {
-      var qty = unshapeQty(knot.qty, knot.price, pStar, qStar, unitBelow, unitAbove);
+      var qty = unshapeQty(knot.qty, knot.price, pStar, qStar, blendBelow, blendAbove);
       return { price: knot.price, qty: Math.max(0, qty) };
     });
   }
@@ -220,8 +242,8 @@
   function projectKnots() {
     return reshapeAroundPeak(
       scaleOnlyKnots(),
-      sensitivityUnit(sensitivityBelow),
-      sensitivityUnit(sensitivityAbove)
+      sensitivityBlendBelow(sensitivityBelow),
+      sensitivityBlend(sensitivityAbove)
     );
   }
 
