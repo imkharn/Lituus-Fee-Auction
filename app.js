@@ -801,7 +801,13 @@
   function applyCreatorPercent(percent, fromSlider) {
     percent = Math.min(CREATOR_MAX, Math.max(CREATOR_MIN, percent));
     percent = Math.round(percent * 1000) / 1000;
-    creatorFee = percent / 100;
+    var nextFee = percent / 100;
+    if (creatorFee > 0 && nextFee > 0 && Math.abs(nextFee - creatorFee) > 1e-15) {
+      C = C * (nextFee / creatorFee);
+      if (!(C > 0) || !isFinite(C)) C = 1;
+      if (document.activeElement !== fee) fee.value = formatWhole(C);
+    }
+    creatorFee = nextFee;
     if (!fromSlider) creatorRange.value = String(sliderFromCreatorPercent(percent));
     if (document.activeElement !== creatorNumber) creatorNumber.value = formatCreator(percent);
     knots = projectKnots();

@@ -301,7 +301,7 @@
             </span>
           </div>
         </div>
-        <p id="creator-help" class="assist">Determines the Optimal Fee; has no effect on auction mechanics in the long run.</p>
+        <p id="creator-help" class="assist">Simply scales the optimal fee and current fee; has no effect on auction mechanics.</p>
         <div class="field">
           <label class="field-label" for="demand-range">Percent of Polymarket demand</label>
           <div class="pair">
@@ -364,7 +364,7 @@
             <li>Shade type: fraction 1−h sits entirely on the cheapest arm. Higher arms sit on the floor from that quantity, or at 0 when k = 0.</li>
             <li>The winner is the arm with the greatest revenue p·Q. Revenues within $0.0001 count as a tie. Ties go to the arm closer to C, then to the lower price.</li>
             <li>The optimal fee maximizes p·D(p) on a 200-price log grid from one sixteenth of the lowest listed price to sixteen times the highest, with every listed price included so a kink is not missed. A constant reporter cost would not move that price, so it is omitted.</li>
-            <li>Market creator fee is a percent of open interest per month. The slider is logarithmic. It rescales the prices in the table, and the auction uses those prices.</li>
+            <li>Market creator fee is a percent of open interest per month. The slider is logarithmic. It rescales the prices in the table and the current query fee together, so relative auction mechanics stay the same.</li>
             <li>Percent of Polymarket demand scales every quantity. 100% is the full curve. That scale does not move the optimal fee.</li>
             <li>The controller must move to one of the four prices. A month works when it selects the price that maximizes revenue when every bidder is honest.</li>
             <li>The honesty threshold is the smallest honest share, on a 0.1% grid and with no bluff-caller, at which that price wins. With a bluff-caller helping, the auction fails to select it only when the honest share is below a second, lower cutoff.</li>
@@ -377,7 +377,7 @@
       <section id="results" aria-label="Auction result"></section>
     </main>
   </div>
-  <script src="auction.js?v=20261116m"></script>
-  <script src="app.js?v=20261116m"></script>
+  <script src="auction.js?v=20261116n"></script>
+  <script src="app.js?v=20261116n"></script>
 </body>
 </html>
