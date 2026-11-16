@@ -46,7 +46,7 @@
   function sensitivityStrength(position) {
     var t = (Number(position) - 50) / 50;
     if (!isFinite(t)) return 0;
-    return t < 0 ? t : t * 5;
+    return t < 0 ? t : t * 4;
   }
 
   function sensitivityLabel(position) {
@@ -56,10 +56,14 @@
     return 'higher';
   }
 
+  /* Mild isoelastic floor through (p*, q*). Higher sensitivity pulls toward this
+     instead of a flat line, so demand still rises as price falls. */
+  var SENSITIVITY_FLOOR_E = 0.35;
+
   /* Reshape around the revenue-maximizing fee. Demand there stays put.
-     Higher sensitivity pulls left-side excess demand down toward D(p*) and
-     scales right-side demand down. Lower sensitivity blends toward 1/p
-     demand, which flattens REP burn. */
+     Higher sensitivity pulls left-side demand toward a gently sloping floor
+     through D(p*) and scales right-side demand down. Lower sensitivity
+     blends toward 1/p demand, which flattens REP burn. */
   function reshapeAroundPeak(rows, strength) {
     if (!rows.length) return [];
     var shaped = rows.map(function (knot) {
@@ -75,9 +79,13 @@
       var qty;
       if (strength > 0) {
         var dist = Math.log(knot.price / pStar);
-        var weight = Math.exp(-strength * dist * dist);
-        if (knot.price <= pStar) qty = qStar + (knot.qty - qStar) * weight;
-        else qty = knot.qty * weight;
+        var weight = 1 / (1 + strength * dist * dist);
+        if (knot.price <= pStar) {
+          var floorQty = qStar * Math.pow(pStar / knot.price, SENSITIVITY_FLOOR_E);
+          qty = floorQty + (knot.qty - floorQty) * weight;
+        } else {
+          qty = knot.qty * weight;
+        }
       } else {
         var alpha = Math.min(0.85, -strength);
         var flatQty = flatBurn / knot.price;
@@ -89,7 +97,9 @@
       return { price: knot.price, qty: Math.max(0, Math.round(knot.qty)) };
     });
     for (var i = 0; i < shaped.length - 1; i++) {
-      if (shaped[i + 1].qty > shaped[i].qty) shaped[i + 1].qty = shaped[i].qty;
+      if (shaped[i + 1].qty >= shaped[i].qty) {
+        shaped[i + 1].qty = Math.max(0, shaped[i].qty - 1);
+      }
     }
     return shaped;
   }
@@ -115,9 +125,10 @@
       var qty;
       if (strength > 0) {
         var dist = Math.log(Math.max(knot.price, 1e-9) / pStar);
-        var weight = Math.exp(-strength * dist * dist);
+        var weight = 1 / (1 + strength * dist * dist);
         if (knot.price <= pStar) {
-          qty = weight > 1e-9 ? qStar + (knot.qty - qStar) / weight : knot.qty;
+          var floorQty = qStar * Math.pow(pStar / Math.max(knot.price, 1e-9), SENSITIVITY_FLOOR_E);
+          qty = weight > 1e-9 ? floorQty + (knot.qty - floorQty) / weight : knot.qty;
         } else {
           qty = weight > 1e-9 ? knot.qty / weight : knot.qty;
         }
