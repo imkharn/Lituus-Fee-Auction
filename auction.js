@@ -44,7 +44,11 @@
         { price: 1000, qty: 2500 },
         { price: 1600, qty: 1500 },
         { price: 2000, qty: 1200 },
-        { price: 3200, qty: 670 }
+        { price: 3200, qty: 670 },
+        { price: 5000, qty: 380 },
+        { price: 8000, qty: 200 },
+        { price: 12000, qty: 110 },
+        { price: 20000, qty: 55 }
       ]
     }
   };
@@ -103,7 +107,9 @@
   }
 
   /* Log-log between anchors. Linear demand on a segment that touches zero.
-     Outside either end, continue that end's segment. Demand never goes negative. */
+     Outside either end, continue that end's segment. If that segment is
+     inelastic (|e| < 1), continue from the endpoint at unit elasticity so
+     burn cannot keep rising forever outside the data. Demand never goes negative. */
   function alongSegment(left, right, p) {
     var span = Math.log(right.price / left.price);
     if (!(span > 0) || !(p > 0)) return Math.max(0, left.qty);
@@ -117,12 +123,24 @@
     return qty > 0 ? qty : 0;
   }
 
+  function segmentElasticity(left, right) {
+    if (!(left.qty > 0) || !(right.qty > 0) || !(right.price > left.price)) return null;
+    return -Math.log(right.qty / left.qty) / Math.log(right.price / left.price);
+  }
+
+  function extrapolateEnd(left, right, p, atHighEnd) {
+    var e = segmentElasticity(left, right);
+    if (e == null || e >= 1 - 1e-12) return alongSegment(left, right, p);
+    if (atHighEnd) return right.qty * (right.price / p);
+    return left.qty * (left.price / p);
+  }
+
   function demandAt(knots, p) {
     if (!(p > 0) || !knots.length) return 0;
     if (knots.length === 1) return Math.max(0, knots[0].qty);
-    if (p <= knots[0].price) return alongSegment(knots[0], knots[1], p);
+    if (p <= knots[0].price) return extrapolateEnd(knots[0], knots[1], p, false);
     var last = knots[knots.length - 1];
-    if (p >= last.price) return alongSegment(knots[knots.length - 2], last, p);
+    if (p >= last.price) return extrapolateEnd(knots[knots.length - 2], last, p, true);
     for (var i = 0; i < knots.length - 1; i++) {
       var left = knots[i];
       var right = knots[i + 1];

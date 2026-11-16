@@ -221,12 +221,26 @@ test('zero demand ties break toward the arm closer to the center', function () {
 
 test('outside the end prices the curve continues the end segment', function () {
   var knots = A.cloneKnots(A.PRESETS.toy.knots);
-  assert.ok(Math.abs(A.demandAt(knots, 5) - 1250) < 1e-6, A.demandAt(knots, 5));
+  /* Low end is inelastic, so exterior continuation uses unit elasticity from $10. */
+  assert.ok(Math.abs(A.demandAt(knots, 5) - 2000) < 1e-6, A.demandAt(knots, 5));
   assert.ok(Math.abs(A.demandAt(knots, 160) - 80) < 1e-6, A.demandAt(knots, 160));
   assert.ok(Math.abs(A.demandAt(knots, 20) - 800) < 1e-9);
   assert.ok(Math.abs(A.demandAt(knots, 40) - 500) < 1e-9);
   var mid = A.demandAt(knots, 40 / 1.1);
   assert.ok(mid < 800 && mid > 500, mid);
+});
+
+test('an inelastic high end does not push the optimal fee to the search boundary', function () {
+  var knots = [
+    { price: 4, qty: 2800 },
+    { price: 42, qty: 440 },
+    { price: 224, qty: 67 },
+    { price: 336, qty: 55 },
+    { price: 504, qty: 50 }
+  ];
+  var pStar = A.optimalFee(knots);
+  assert.ok(pStar.price <= 504 + 1e-6, pStar.price);
+  assert.ok(pStar.price < 504 * 8, pStar.price);
 });
 
 test('creator fee scales the optimal query fee and a quantity scale would not', function () {
