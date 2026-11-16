@@ -69,20 +69,46 @@
     return 'higher';
   }
 
-  /* Below p*: mild downward slope. Above p*: steeper drop. Both pass through
-     D(p*), so the revenue-maximizing fee stays put. */
+  /* Below p*: mild then deeper downward slopes. Above p*: steeper drop.
+     Both pass through D(p*), so the revenue-maximizing fee stays put. */
   var SENSITIVITY_LEFT_E = 0.45;
+  var SENSITIVITY_LEFT_DEEP_E = 0.18;
   var SENSITIVITY_RIGHT_E = 2.4;
 
-  function sensitivityTargetQty(price, pStar, qStar) {
-    var e = price <= pStar ? SENSITIVITY_LEFT_E : SENSITIVITY_RIGHT_E;
-    return qStar * Math.pow(pStar / Math.max(price, 1e-9), e);
+  function sensitivityTargetQty(price, pStar, qStar, elasticity) {
+    return qStar * Math.pow(pStar / Math.max(price, 1e-9), elasticity);
   }
 
   function blendForPrice(price, pStar, blendBelow, blendAbove) {
     if (price < pStar) return blendBelow;
     if (price > pStar) return blendAbove;
     return 0;
+  }
+
+  /* Below-optimum blend spans 0..2: first to the mild floor, then to a deeper
+     sloping floor. Above-optimum stays on a 0..1 blend to its steep target. */
+  function applyPositiveBlend(qty, price, pStar, qStar, blend, belowSide) {
+    if (belowSide) {
+      var mild = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_E);
+      if (blend <= 1) return qty + blend * (mild - qty);
+      var deep = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_DEEP_E);
+      return mild + (blend - 1) * (deep - mild);
+    }
+    var target = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_E);
+    return qty + Math.min(blend, 1) * (target - qty);
+  }
+
+  function invertPositiveBlend(qty, price, pStar, qStar, blend, belowSide) {
+    if (belowSide) {
+      var mild = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_E);
+      if (blend <= 1) {
+        return Math.abs(blend - 1) > 1e-9 ? (qty - blend * mild) / (1 - blend) : qty;
+      }
+      return mild;
+    }
+    var target = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_E);
+    var used = Math.min(blend, 1);
+    return Math.abs(used - 1) > 1e-9 ? (qty - used * target) / (1 - used) : qty;
   }
 
   /* Reshape around the revenue-maximizing fee. Demand there stays put.
@@ -103,8 +129,7 @@
       var qty = knot.qty;
       if (Math.abs(blend) >= 1e-12) {
         if (blend > 0) {
-          var target = sensitivityTargetQty(knot.price, pStar, qStar);
-          qty = knot.qty + blend * (target - knot.qty);
+          qty = applyPositiveBlend(knot.qty, knot.price, pStar, qStar, blend, knot.price < pStar);
         } else {
           var alpha = Math.min(0.85, -blend);
           var flatQty = flatBurn / knot.price;
@@ -147,10 +172,7 @@
       var qty = knot.qty;
       if (Math.abs(blend) >= 1e-12) {
         if (blend > 0) {
-          var target = sensitivityTargetQty(knot.price, pStar, qStar);
-          qty = Math.abs(blend - 1) > 1e-9
-            ? (knot.qty - blend * target) / (1 - blend)
-            : knot.qty;
+          qty = invertPositiveBlend(knot.qty, knot.price, pStar, qStar, blend, knot.price < pStar);
         } else {
           var alpha = Math.min(0.85, -blend);
           var flatQty = flatBurn / Math.max(knot.price, 1e-9);
