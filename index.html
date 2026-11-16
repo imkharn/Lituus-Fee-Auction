@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Query Token auction</title>
+  <meta name="description" content="Query Token auction calculator. Honest bids, colluding minimum bids, and a bluff-caller. Runs entirely in the browser.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231b1612'/%3E%3Cpath d='M8 23V9h6' fill='none' stroke='%23f3ecdf' stroke-width='2'/%3E%3Ccircle cx='22' cy='13' r='3' fill='%23b45324'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --ink: #1b1612;
+      --muted: #5e564c;
+      --paper: #f3ecdf;
+      --card: #faf6ee;
+      --line: #1b1612;
+      --line-soft: #ddd4c6;
+      --copper: #b45324;
+      --copper-soft: #f6e6da;
+      --pine: #1f6a45;
+      --pine-soft: #e5f3eb;
+      --warn-soft: #f8ecd4;
+      --field: #fffdf8;
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: light; }
+    body {
+      margin: 0;
+      border-top: 8px solid var(--copper);
+      background: var(--paper);
+      color: var(--ink);
+      font: 15px/1.45 "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+    body, button, input { font-variant-numeric: tabular-nums; }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    :focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 22px 48px; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 28px;
+      padding-bottom: 18px;
+      margin-bottom: 22px;
+      border-bottom: 1px solid var(--ink);
+    }
+    .eyebrow {
+      margin: 0 0 4px;
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Iowan Old Style", Palatino, "Palatino Linotype", serif;
+      font-size: 42px;
+      font-weight: 500;
+      letter-spacing: -0.03em;
+      line-height: 0.95;
+    }
+    main { display: grid; grid-template-columns: minmax(300px, 390px) minmax(0, 1fr); gap: 22px; align-items: start; }
+    #controls, .card {
+      background: var(--card);
+      border: 1px solid var(--ink);
+    }
+    #controls { padding: 16px 16px 8px; }
+    .card { padding: 14px 14px 16px; margin-bottom: 12px; }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h2.sentence {
+      font-size: 15px;
+      letter-spacing: 0;
+      text-transform: none;
+      line-height: 1.35;
+    }
+    .field { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px; }
+    .fee-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: stretch; }
+    .fee-row input { width: 100%; }
+    .fee-row button { padding: 8px 10px; }
+    .field-label { font-size: 14px; }
+    .assist, .hint { margin: -6px 0 14px; color: var(--muted); font-size: 13px; }
+    input[type="number"], input[type="text"] {
+      width: 100%;
+      border: 1px solid var(--ink);
+      background: var(--field);
+      padding: 8px 10px;
+    }
+    .pair { display: grid; grid-template-columns: minmax(0, 1fr) 108px; gap: 10px; align-items: center; }
+    .pct { position: relative; }
+    .pct input { padding-right: 22px; }
+    .pct-sign {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      pointer-events: none;
+    }
+    input[type="range"] { width: 100%; accent-color: var(--copper); }
+    .toolbar, .presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+    button {
+      border: 1px solid var(--ink);
+      background: transparent;
+      padding: 8px 12px;
+    }
+    button:hover { background: var(--ink); color: var(--paper); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button:disabled:hover { background: transparent; color: inherit; }
+    button.solid { background: var(--ink); color: var(--paper); }
+    button.solid:hover { background: var(--copper); border-color: var(--copper); color: white; }
+    button.ghost { padding: 6px 8px; font-size: 12px; }
+    .check { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 14px; }
+    .check input { width: auto; accent-color: var(--copper); }
+    .knot-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    .knot-table th {
+      text-align: left;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 650;
+      padding: 0 6px 6px 0;
+      border-bottom: 1px solid var(--ink);
+    }
+    .knot-table td { padding: 6px 6px 0 0; vertical-align: middle; }
+    .unit { display: block; letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--muted); }
+    .note {
+      background: var(--warn-soft);
+      padding: 8px 10px;
+      margin: 0 0 12px;
+      font-size: 13px;
+    }
+    .note.flash { animation: flash 1.2s ease; }
+    @keyframes flash {
+      from { background: #f0c48a; }
+      to { background: var(--warn-soft); }
+    }
+    .error { background: #f8e0d8; }
+    details { margin: 8px 0 12px; }
+    summary { cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase; font-size: 12px; font-weight: 650; }
+    details p, details li { font-size: 13px; color: var(--ink); }
+    details ul { margin: 8px 0 0; padding-left: 18px; }
+    .hero { display: grid; grid-template-columns: 1.15fr 1fr 0.95fr; gap: 10px; margin-bottom: 12px; }
+    .hero article {
+      border: 1px solid var(--ink);
+      background: var(--card);
+      padding: 12px 14px 14px;
+      min-height: 148px;
+    }
+    .hero article:nth-child(1) { box-shadow: inset 0 3px 0 var(--copper); }
+    .hero article:nth-child(2) { box-shadow: inset 0 3px 0 var(--pine); }
+    .hero-value {
+      margin: 0;
+      font-family: Georgia, "Iowan Old Style", Palatino, serif;
+      font-size: 46px;
+      font-weight: 500;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    .sub { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+    .badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 5px 8px;
+      border: 1px solid var(--ink);
+      font-size: 13px;
+    }
+    .badge.good { background: var(--pine-soft); border-color: var(--pine); color: var(--pine); }
+    .badge.bad { background: var(--copper-soft); border-color: var(--copper); color: #8a3e16; }
+    .badge.same { background: var(--card); }
+    .ribbon {
+      border: 1px solid var(--pine);
+      background: var(--pine-soft);
+      padding: 8px 12px;
+      margin-bottom: 10px;
+    }
+    .table-wrap { overflow-x: auto; }
+    table.book { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.book th {
+      text-align: right;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 6px 3px;
+      border-bottom: 1px solid var(--ink);
+      white-space: normal;
+      line-height: 1.15;
+      vertical-align: bottom;
+    }
+    table.book th:first-child, table.book td:first-child { text-align: left; }
+    table.book td { text-align: right; padding: 7px 3px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+    table.book tr.winner td { background: var(--copper-soft); }
+    table.book tr.winner.good td { background: var(--pine-soft); }
+    .bar { height: 4px; margin-top: 5px; background: #efe6da; }
+    .bar span { display: block; height: 100%; background: var(--copper); }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: 8px; }
+    .stat { border-top: 1px solid var(--line-soft); padding-top: 8px; }
+    .stat span { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .stat b {
+      display: block;
+      margin-top: 2px;
+      font-family: Georgia, Palatino, serif;
+      font-size: 26px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+    .chart-card svg { width: 100%; height: auto; display: block; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 16px; list-style: none; margin: 10px 0 0; padding: 0; color: var(--muted); font-size: 12px; }
+    .legend li { display: flex; align-items: center; gap: 6px; }
+    .swatch { width: 18px; height: 0; border-top: 2px solid var(--ink); }
+    .swatch.burn { border-top-color: var(--copper); }
+    .swatch.arm { border-top: 1px dashed var(--line-soft); }
+    .swatch.current { border-top: 1px dashed var(--ink); }
+    .swatch.dot { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--copper); }
+    .swatch.diamond { width: 8px; height: 8px; border: 0; background: var(--pine); transform: rotate(45deg); }
+    @media (max-width: 900px) {
+      header, main, .hero { display: block; }
+      .hero article { margin-bottom: 10px; }
+      h1 { font-size: 34px; }
+      .hero-value { font-size: 40px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .note.flash { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <p class="eyebrow">Lituus</p>
+        <h1>Query Token auction</h1>
+      </div>
+    </header>
+    <main>
+      <form id="controls" autocomplete="off">
+        <div class="field">
+          <label class="field-label" for="fee">Current query fee</label>
+          <div class="fee-row">
+            <input id="fee" type="number" min="1" step="1" value="40" inputmode="numeric">
+            <button type="button" id="next-month">Next Month</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="honest-range">Percent of bidders that bid honestly</label>
+          <div class="pair">
+            <input id="honest-range" type="range" min="0" max="100" step="1" value="50" aria-describedby="honest-help">
+            <span class="pct">
+              <input id="honest-number" type="number" min="0" max="100" step="1" value="50" inputmode="numeric" aria-label="Percent of bidders that bid honestly">
+              <span class="pct-sign" aria-hidden="true">%</span>
+            </span>
+          </div>
+        </div>
+        <p id="honest-help" class="assist">Percent of the demand that reports according to the demand curve. The rest collude to bid the minimum amount on all prices that are not the lowest price.</p>
+
+        <div class="field">
+          <label class="field-label" for="floor-range">Minimum demand per doubling</label>
+          <div class="pair">
+            <input id="floor-range" type="range" min="0" max="0.4999" step="0.001" value="0.25">
+            <input id="floor-number" type="number" min="0" max="0.4999" step="0.0001" value="0.25" inputmode="decimal" aria-label="Minimum demand per doubling">
+          </div>
+        </div>
+        <p class="assist">Elasticity <output id="elasticity">e = 2.000</output>. For every price doubling, a legal bid is required to bid at least this fraction of the quantity.</p>
+        <p id="floor-warning" class="note" hidden>The minimum demand rule is causing honest bidders to have to bid more quantity than they want to for higher prices. They are reacting by reporting their demand honestly on the highest price and bidding the max amount allowed on all lower prices. As a result overall demand is artifically reduced causing lower efficiency</p>
+
+        <div class="field">
+          <label class="field-label" for="creator-range">Market creator fee on open interest</label>
+          <div class="pair">
+            <input id="creator-range" type="range" min="0" max="1000" step="1" value="313" aria-describedby="creator-help">
+            <span class="pct">
+              <input id="creator-number" type="number" min="0.01" max="5" step="0.001" value="0.07" inputmode="decimal" aria-label="Market creator fee on open interest">
+              <span class="pct-sign" aria-hidden="true">%</span>
+            </span>
+          </div>
+        </div>
+        <p id="creator-help" class="assist">Determines the revenue maximizing fee.</p>
+        <div class="field">
+          <label class="field-label" for="demand-range">Percent of Polymarket demand</label>
+          <div class="pair">
+            <input id="demand-range" type="range" min="1" max="200" step="1" value="10" aria-describedby="demand-help">
+            <span class="pct">
+              <input id="demand-number" type="number" min="1" max="200" step="1" value="10" inputmode="decimal" aria-label="Percent of Polymarket demand">
+              <span class="pct-sign" aria-hidden="true">%</span>
+            </span>
+          </div>
+        </div>
+        <p id="demand-help" class="assist">Simply scales the dollars and quantities involved; has no effect on the auction mechanics.</p>
+        <h2>Demand curve</h2>
+        <div class="table-wrap">
+          <table class="knot-table" id="knots">
+            <thead>
+              <tr>
+                <th>Price ($)</th>
+                <th>Demand <span class="unit">queries per month</span></th>
+                <th><span class="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="assist">Between prices, demand is log-linear in log price, so each segment has constant elasticity. A segment that touches zero demand is linear in demand instead. Outside the end prices, the curve continues that end segment.</p>
+        <p id="knot-note" class="note" hidden></p>
+        <p id="knot-error" class="note error" hidden></p>
+        <div class="toolbar">
+          <button type="button" id="add-knot">Add price</button>
+          <button type="button" id="sort-knots">Sort by price</button>
+        </div>
+        <div class="presets">
+          <button type="button" class="solid" id="preset-poly">Use Polymarket OI distribution</button>
+          <button type="button" id="preset-toy">Reset to Defaults</button>
+        </div>
+
+        <details>
+          <summary>Rules</summary>
+          <ul>
+            <li>Arms, given center C: Half 0.5C, Near-low C/1.1, Near-high 1.1C, Double 2C.</li>
+            <li>Floor: for k &gt; 0, elasticity e = −ln(k) / ln(2). A report must satisfy q(p′) ≥ q(p) · (p′/p)<sup>−e</sup> whenever p′ &gt; p. k = 0 is no floor. Upward-sloping reports are allowed.</li>
+            <li>Honest type: fraction h of true demand at the highest price. Each lower price bids as much as the floor allows, and no more than h·D(p).</li>
+            <li>Shade type: fraction 1−h sits entirely on the cheapest arm. Higher arms sit on the floor from that quantity, or at 0 when k = 0.</li>
+            <li>The winner is the arm with the greatest revenue p·Q. Revenues within $0.0001 count as a tie. Ties go to the arm closer to C, then to the lower price.</li>
+            <li>The optimal fee maximizes p·D(p) on a 200-price log grid from one sixteenth of the lowest listed price to sixteen times the highest, with every listed price included so a kink is not missed. A constant reporter cost would not move that price, so it is omitted.</li>
+            <li>Market creator fee is a percent of open interest per month. The slider is logarithmic. It rescales the prices in the table, and the auction uses those prices.</li>
+            <li>Percent of Polymarket demand scales every quantity. 100% is the full curve. That scale does not move the optimal fee.</li>
+            <li>The controller must move to one of the four prices. A month works when it selects the price that maximizes revenue when every bidder is honest.</li>
+            <li>The honesty threshold is the smallest honest share, on a 0.1% grid and with no bluff-caller, at which that price wins. With a bluff-caller helping, the auction fails to select it only when the honest share is below a second, lower cutoff.</li>
+            <li>Controller efficiency is this month’s burn at the winning price, p·D(p), divided by the maximum REP burn.</li>
+            <li>A bluff-caller bids nothing on the cheaper prices and bids on one higher price. They buy at least enough to lead the book by $0.01 of revenue, and more when the extra tokens still resell above their cost. Other bidders create the highest-value markets with the tokens they get at that price. The caller resells to the less valuable markets left over, at no more than the revenue-maximizing fee. They choose the purchase price, the quantity, and the resale price with the most profit. If that profit is positive, their bid is in the book and that price wins.</li>
+            <li>Next Month copies this month’s winning price into the current query fee.</li>
+          </ul>
+        </details>
+      </form>
+      <section id="results" aria-label="Auction result"></section>
+    </main>
+  </div>
+  <script src="auction.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

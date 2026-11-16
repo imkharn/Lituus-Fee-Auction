@@ -1,0 +1,787 @@
+(function () {
+  'use strict';
+
+  var A = window.FeeAuction;
+  var preset = A.PRESETS.polymarket;
+  var baseKnots = A.cloneKnots(preset.knots);
+  var demandPercent = 10;
+  var C = preset.C;
+  var h = preset.h;
+  var k = preset.k;
+  var creatorFee = preset.creatorPercent / 100;
+
+  var CREATOR_MIN = 0.01;
+  var CREATOR_MAX = 5;
+  var CREATOR_STEPS = 1000;
+
+  function demandFactor() {
+    return demandPercent / 100;
+  }
+
+  function priceScale() {
+    return creatorFee / A.REFERENCE_CREATOR_FEE;
+  }
+
+  function creatorPercentFromSlider(position) {
+    var t = Math.min(CREATOR_STEPS, Math.max(0, Number(position))) / CREATOR_STEPS;
+    var logMin = Math.log(CREATOR_MIN);
+    var logMax = Math.log(CREATOR_MAX);
+    return Math.exp(logMin + t * (logMax - logMin));
+  }
+
+  function sliderFromCreatorPercent(percent) {
+    var logMin = Math.log(CREATOR_MIN);
+    var logMax = Math.log(CREATOR_MAX);
+    var t = (Math.log(percent) - logMin) / (logMax - logMin);
+    return Math.round(Math.min(1, Math.max(0, t)) * CREATOR_STEPS);
+  }
+
+  function formatCreator(percent) {
+    var rounded = Math.round(percent * 1000) / 1000;
+    return rounded >= 0.1 ? rounded.toFixed(2) : rounded.toFixed(3);
+  }
+
+  /* Prices in the table are the prices the auction uses. The stored curve is
+     the 1% creator-fee book; the slider scales those prices onto the page. */
+  function projectKnots() {
+    var ps = priceScale();
+    var qs = demandFactor();
+    var rows = [];
+    baseKnots.forEach(function (knot) {
+      var price = Math.max(1, Math.round(knot.price * ps));
+      var qty = Math.max(0, Math.round(knot.qty * qs));
+      if (rows.length && price <= rows[rows.length - 1].price) price = rows[rows.length - 1].price + 1;
+      if (rows.length && qty > rows[rows.length - 1].qty) qty = rows[rows.length - 1].qty;
+      rows.push({ price: price, qty: qty });
+    });
+    return rows;
+  }
+
+  function adoptDisplayed(displayed) {
+    var ps = priceScale();
+    var qs = demandFactor();
+    baseKnots = displayed.map(function (knot) {
+      return {
+        price: ps > 0 ? knot.price / ps : knot.price,
+        qty: qs > 0 ? knot.qty / qs : knot.qty
+      };
+    });
+    knots = projectKnots();
+  }
+
+  var knots = projectKnots();
+  var bluffDisabled = false;
+  var winningPrice = Math.max(1, Math.round(C));
+  var noteTimer = 0;
+  var priceCommit = 0;
+
+  var fee = document.getElementById('fee');
+  var honestRange = document.getElementById('honest-range');
+  var honestNumber = document.getElementById('honest-number');
+  var floorRange = document.getElementById('floor-range');
+  var floorNumber = document.getElementById('floor-number');
+  var creatorRange = document.getElementById('creator-range');
+  var creatorNumber = document.getElementById('creator-number');
+  var demandRange = document.getElementById('demand-range');
+  var demandNumber = document.getElementById('demand-number');
+  var knotTable = document.getElementById('knots');
+
+  document.getElementById('controls').addEventListener('submit', function (event) {
+    event.preventDefault();
+  });
+
+  function money(n) {
+    return Math.round(n).toLocaleString('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0
+    });
+  }
+
+  function qty(n) {
+    return Math.round(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  }
+
+  function percent(fraction) {
+    return Math.round(fraction * 100).toLocaleString('en-US') + '%';
+  }
+
+  function formatPlain(n) {
+    if (!isFinite(n)) return '';
+    if (Math.abs(n - Math.round(n)) < 1e-8) return String(Math.round(n));
+    return String(Math.round(n * 1e6) / 1e6);
+  }
+
+  function formatWhole(n) {
+    if (!isFinite(n)) return '';
+    return String(Math.round(n));
+  }
+
+  function formatE(value) {
+    if (!(value > 0)) return 'no floor';
+    var e = -Math.log(value) / Math.log(2);
+    return e.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  }
+
+  function compact(n) {
+    var sign = n < 0 ? '-' : '';
+    var v = Math.abs(n);
+    function unit(div, suffix) {
+      var text = (Math.round(v / div * 10) / 10).toFixed(1).replace(/\.0$/, '');
+      return sign + text + suffix;
+    }
+    if (v >= 1e6) return unit(1e6, 'M');
+    if (v >= 1e3) return unit(1e3, 'k');
+    return sign + String(Math.round(v));
+  }
+
+  function esc(value) {
+    return String(value).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  function flash(text) {
+    var el = document.getElementById('knot-note');
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(function () { el.hidden = true; }, 4200);
+  }
+
+  function clearNote() {
+    clearTimeout(noteTimer);
+    document.getElementById('knot-note').hidden = true;
+  }
+
+  function showKnotError(text) {
+    var el = document.getElementById('knot-error');
+    el.hidden = false;
+    el.textContent = text;
+  }
+
+  function hideKnotError() {
+    document.getElementById('knot-error').hidden = true;
+  }
+
+  function readRows() {
+    var rows = [];
+    var incomplete = false;
+    knotTable.querySelectorAll('tbody tr').forEach(function (tr) {
+      var priceRaw = tr.querySelector('.knot-price').value.trim();
+      var qtyRaw = tr.querySelector('.knot-qty').value.trim();
+      if (priceRaw === '' || qtyRaw === '') incomplete = true;
+      rows.push({ price: Number(priceRaw), qty: Number(qtyRaw) });
+    });
+    return { rows: rows, incomplete: incomplete };
+  }
+
+  function renderKnots() {
+    var body = knotTable.querySelector('tbody');
+    var locked = knots.length <= 2;
+    body.innerHTML = knots.map(function (knot, index) {
+      return '<tr>' +
+        '<td><input class="knot-price" data-index="' + index + '" type="number" min="0" step="any" value="' + formatWhole(knot.price) + '" aria-label="Price ' + (index + 1) + '"></td>' +
+        '<td><input class="knot-qty" data-index="' + index + '" type="number" min="0" step="1" value="' + formatWhole(knot.qty) + '" aria-label="Demand ' + (index + 1) + '"></td>' +
+        '<td><button type="button" class="ghost" data-remove="' + index + '"' + (locked ? ' disabled' : '') + '>Remove</button></td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function writeQty(list) {
+    knotTable.querySelectorAll('.knot-qty').forEach(function (input, index) {
+      var next = formatWhole(list[index].qty);
+      var typed = Number(input.value);
+      if (typed !== list[index].qty) input.value = next;
+    });
+  }
+
+  function bluffReason() {
+    return 'Bluff-calling is not profitable this month. A bluff-caller bids nothing on the cheaper prices and enough at a higher price to cause it to win, then resells for a profit.';
+  }
+
+  function honestyHtml(model) {
+    var value = percent(model.hStar);
+    var optimal = money(model.hStarPick.price);
+    var detail = 'If this percent of bidders are honest, the auction successfully selects the optimal price (' + optimal + ') even without a bluff-caller.';
+    var floor;
+    if (model.hBluff == null) {
+      floor = 'Even with a bluff-caller helping, no honest share selects the optimal price.';
+    } else if (model.hBluff === 0) {
+      floor = 'With a bluff-caller helping, the auction will select the optimal price (' +
+        money(model.hBluffPick.price) + ') even if all bidders lie.';
+    } else {
+      floor = 'The percent honest would have to be below ' + percent(model.hBluff) +
+        ' to not select the optimal price even with a bluff-caller helping.';
+    }
+    return '<article class="card"><h2 class="sentence">Honesty threshold where controller works perfectly even without a bluff-caller</h2>' +
+      '<p class="hero-value" style="font-size:40px" data-testid="hstar">' + esc(value) + '</p>' +
+      '<p class="sub" data-testid="hstar-note">' + esc(detail) + '</p>' +
+      '<p class="sub" data-testid="bluff-floor">' + esc(floor) + '</p></article>';
+  }
+
+  function bluffToggle() {
+    return '<label class="check"><input type="checkbox" id="disable-bluff" data-testid="disable-bluff"' +
+      (bluffDisabled ? ' checked' : '') + '> Disable Bluff-Caller</label>';
+  }
+
+  function bluffHtml(model) {
+    var best = model.bestBluff;
+    var toggle = bluffToggle();
+    if (!best) {
+      return '<article class="card" data-testid="bluff-card"><h2>Bluff-caller</h2>' + toggle +
+        '<p data-testid="bluff-reason">' + esc(bluffReason(model)) + '</p></article>';
+    }
+    if (bluffDisabled) {
+      return '<article class="card" data-testid="bluff-card"><h2>Bluff-caller</h2>' + toggle +
+        '<p data-testid="bluff-disabled">A bluff-caller will not show up even though its profitable to do so</p></article>';
+    }
+    var others = model.rationalBluffs.length - 1;
+    var more = others > 0
+      ? '<p class="sub">' + others + (others === 1 ? ' other price earns less profit.' : ' other prices earn less profit.') + '</p>'
+      : '';
+    var bidQty = best.quantity > 0 ? best.quantity : best.delta;
+    var tokens = Math.round(bidQty);
+    var markets = Math.round(best.leftover);
+    var tokenWord = tokens === 1 ? 'query token' : 'query tokens';
+    var marketWord = markets === 1 ? 'market' : 'markets';
+    return '<article class="card" data-testid="bluff-card"><h2>Bluff-caller</h2>' + toggle +
+      '<p data-testid="bluff-call">Bids enough (' + qty(bidQty) + ' ' + tokenWord + ') on the ' + money(best.price) +
+      ' price to cause that price to win, then resells at ' + money(best.sellPrice) +
+      '. They are able to sell at this price because other bidders lied about demand and there are still ' +
+      qty(best.leftover) + ' ' + marketWord + ' that are profitable to create at this price.</p>' +
+      '<div class="stats">' +
+      '<div class="stat"><span>Spend</span><b data-testid="bluff-spend">' + money(best.spend) + '</b></div>' +
+      '<div class="stat"><span>Resale price</span><b data-testid="bluff-sell">' + money(best.sellPrice) + '</b></div>' +
+      '<div class="stat"><span>Profit</span><b data-testid="bluff-profit">' + money(best.profit) + '</b></div>' +
+      '<div class="stat"><span>ROI</span><b data-testid="bluff-roi">' + percent(best.roi) + '</b></div>' +
+      '</div>' +
+      more + '</article>';
+  }
+
+  function tableHtml(model) {
+    var maxRev = model.arms.reduce(function (max, arm) { return Math.max(max, arm.revenue); }, 0) || 1;
+    var capped = model.arms.some(function (arm) { return arm.honestCapped; });
+    var showCall = model.arms.some(function (arm) { return arm.bluff > 0; });
+    var head = '<tr><th>Arm</th><th>Price</th><th>Honest qty</th><th>Shade qty</th>' +
+      (showCall ? '<th>Caller qty</th>' : '') +
+      '<th>Total qty</th><th>Revenue</th></tr>';
+    var perfect = model.hStarPick && model.winner.id === model.hStarPick.id;
+    var body = model.arms.map(function (arm) {
+      var width = Math.max(0, Math.min(100, 100 * arm.revenue / maxRev));
+      var rowClass = arm.id === model.winner.id ? (perfect ? 'winner good' : 'winner') : '';
+      return '<tr class="' + rowClass + '" data-testid="arm-' + arm.id + '">' +
+        '<td>' + esc(arm.label) + '</td>' +
+        '<td>' + money(arm.price) + '</td>' +
+        '<td>' + qty(arm.honest) + '</td>' +
+        '<td>' + qty(arm.shade) + '</td>' +
+        (showCall ? '<td>' + qty(arm.bluff || 0) + '</td>' : '') +
+        '<td>' + qty(arm.total) + '</td>' +
+        '<td>' + money(arm.revenue) + '<div class="bar" aria-hidden="true"><span style="width:' + width.toFixed(1) + '%"></span></div></td>' +
+        '</tr>';
+    }).join('');
+    var foot = capped ? '<p class="sub">Lower honest bids are as high as the floor allows. The highest price stays at true demand.</p>' : '';
+    var caption = showCall ? 'Reported book, with the bluff-caller' : 'Reported book';
+    return '<article class="card"><h2>' + caption + '</h2><div class="table-wrap"><table class="book">' +
+      head + body + '</table></div>' + foot + '</article>';
+  }
+
+  function chartSvg(model) {
+    var curveKnots = model.knots;
+    var prices = [curveKnots[0].price, curveKnots[curveKnots.length - 1].price, model.C, model.pStar.price];
+    model.arms.forEach(function (arm) { prices.push(arm.price); });
+    var pMin = Math.min.apply(null, prices);
+    var pMax = Math.max.apply(null, prices);
+    if (!(pMax > pMin * 1.000001)) pMax = pMin * 1.01;
+    var width = 720;
+    var padL = 58;
+    var padR = 16;
+    var padT = 28;
+    var plotH = 132;
+    var padB = 28;
+    var panelH = padT + plotH + padB;
+    var height = panelH * 2;
+    var samplePs = [];
+    for (var i = 0; i <= 140; i++) samplePs.push(pMin * Math.pow(pMax / pMin, i / 140));
+    curveKnots.forEach(function (knot) { samplePs.push(knot.price); });
+    samplePs.push(model.C, model.pStar.price, model.winner.price);
+    samplePs = samplePs.filter(function (p) { return p > 0; }).sort(function (a, b) { return a - b; });
+    var samples = [];
+    samplePs.forEach(function (p) {
+      if (samples.length && Math.abs(p - samples[samples.length - 1].p) / p < 1e-8) return;
+      var q = A.demandAt(curveKnots, p);
+      samples.push({ p: p, q: q, burn: p * q });
+    });
+    var qMax = samples.reduce(function (max, s) { return Math.max(max, s.q); }, 1) * 1.14;
+    var bMax = samples.reduce(function (max, s) { return Math.max(max, s.burn); }, 1) * 1.14;
+
+    function xOf(p) {
+      var t = Math.log(p / pMin) / Math.log(pMax / pMin);
+      return padL + t * (width - padL - padR);
+    }
+    function yOf(value, max, top) {
+      return top + padT + (1 - value / max) * plotH;
+    }
+    function linePath(key, max, top) {
+      return samples.map(function (s, index) {
+        return (index ? 'L' : 'M') + xOf(s.p).toFixed(2) + ' ' + yOf(s[key], max, top).toFixed(2);
+      }).join('');
+    }
+    function areaPath(key, max, top) {
+      var base = (top + padT + plotH).toFixed(2);
+      var start = xOf(samples[0].p).toFixed(2);
+      var end = xOf(samples[samples.length - 1].p).toFixed(2);
+      return linePath(key, max, top) + 'L' + end + ' ' + base + 'L' + start + ' ' + base + 'Z';
+    }
+
+    var parts = [];
+    parts.push('<svg viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Demand and REP burn. Optimal fee ' +
+      money(model.pStar.price) + ', selected fee ' + money(model.winner.price) + '.">');
+    parts.push('<rect width="' + width + '" height="' + height + '" fill="#faf6ee"/>');
+
+    function panel(top, key, max, title, yFormat) {
+      var axisTop = top + padT;
+      var axisBot = top + padT + plotH;
+      parts.push('<line x1="' + padL + '" y1="' + axisTop + '" x2="' + padL + '" y2="' + axisBot + '" stroke="#1b1612" stroke-width="1"/>');
+      parts.push('<line x1="' + padL + '" y1="' + axisBot + '" x2="' + (width - padR) + '" y2="' + axisBot + '" stroke="#1b1612" stroke-width="1"/>');
+      [0.5, 1].forEach(function (frac) {
+        var y = yOf(max * frac, max, top);
+        parts.push('<line x1="' + padL + '" y1="' + y.toFixed(2) + '" x2="' + (width - padR) + '" y2="' + y.toFixed(2) + '" stroke="#e6ddd0" stroke-width="1"/>');
+        parts.push('<text x="' + (padL - 8) + '" y="' + (y + 4).toFixed(2) + '" text-anchor="end" font-size="11" fill="#5e564c">' + yFormat(max * frac) + '</text>');
+      });
+      parts.push('<text x="' + (padL - 8) + '" y="' + (axisBot + 4) + '" text-anchor="end" font-size="11" fill="#5e564c">0</text>');
+      parts.push('<text x="' + padL + '" y="' + (top + 16) + '" font-size="13" font-weight="600" fill="#1b1612">' + title + '</text>');
+      model.arms.forEach(function (arm) {
+        var x = xOf(arm.price);
+        parts.push('<line x1="' + x.toFixed(2) + '" y1="' + axisTop + '" x2="' + x.toFixed(2) + '" y2="' + axisBot + '" stroke="#e4d9cc" stroke-width="1"/>');
+      });
+      var cx = xOf(model.C);
+      parts.push('<line x1="' + cx.toFixed(2) + '" y1="' + axisTop + '" x2="' + cx.toFixed(2) + '" y2="' + axisBot + '" stroke="#1b1612" stroke-width="1" stroke-dasharray="3 3"/>');
+    }
+
+    panel(0, 'q', qMax, 'Demand', compact);
+    panel(panelH, 'burn', bMax, 'REP burn', function (n) { return '$' + compact(n); });
+    parts.push('<path d="' + areaPath('q', qMax, 0) + '" fill="#1b1612" opacity="0.06"/>');
+    parts.push('<path d="' + linePath('q', qMax, 0) + '" fill="none" stroke="#1b1612" stroke-width="2"/>');
+    parts.push('<path d="' + areaPath('burn', bMax, panelH) + '" fill="#b45324" opacity="0.1"/>');
+    parts.push('<path d="' + linePath('burn', bMax, panelH) + '" fill="none" stroke="#b45324" stroke-width="2"/>');
+
+    function dot(price, value, max, top, kind) {
+      var x = xOf(price);
+      var y = yOf(value, max, top);
+      if (kind === 'optimal') {
+        var d = 5;
+        parts.push('<polygon points="' + x.toFixed(2) + ',' + (y - d).toFixed(2) + ' ' + (x + d).toFixed(2) + ',' + y.toFixed(2) + ' ' +
+          x.toFixed(2) + ',' + (y + d).toFixed(2) + ' ' + (x - d).toFixed(2) + ',' + y.toFixed(2) + '" fill="#1f6a45" stroke="#faf6ee" stroke-width="1.5"/>');
+      } else {
+        parts.push('<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="4.5" fill="#b45324" stroke="#faf6ee" stroke-width="1.5"/>');
+      }
+    }
+    dot(model.pStar.price, model.pStar.quantity, qMax, 0, 'optimal');
+    dot(model.winner.price, A.demandAt(curveKnots, model.winner.price), qMax, 0, 'selected');
+    dot(model.pStar.price, model.pStar.burn, bMax, panelH, 'optimal');
+    dot(model.winner.price, model.winner.price * A.demandAt(curveKnots, model.winner.price), bMax, panelH, 'selected');
+
+    var tags = [
+      { x: xOf(model.pStar.price), text: 'Optimal', color: '#1f6a45', role: 'optimal' },
+      { x: xOf(model.winner.price), text: 'Selected', color: '#b45324', role: 'selected' },
+      { x: xOf(model.C), text: 'Current', color: '#1b1612', role: 'current' }
+    ].sort(function (a, b) { return a.x - b.x; });
+    var merged = [];
+    tags.forEach(function (tag) {
+      var prev = merged[merged.length - 1];
+      if (prev && Math.abs(tag.x - prev.x) < 12) {
+        prev.text += ' · ' + tag.text;
+        if (tag.role === 'optimal') prev.color = tag.color;
+      } else {
+        merged.push({ x: tag.x, text: tag.text, color: tag.color });
+      }
+    });
+    var lanes = [-1e9, -1e9];
+    merged.forEach(function (tag) {
+      var lane = tag.x - lanes[0] >= 72 ? 0 : 1;
+      if (tag.x - lanes[lane] < 72) lane = lane === 0 ? 1 : 0;
+      tag.lane = lane;
+      lanes[lane] = tag.x;
+      var anchor = 'middle';
+      var x = tag.x;
+      if (x < padL + 36) { anchor = 'start'; x = Math.max(x, padL); }
+      if (x > width - padR - 36) { anchor = 'end'; x = Math.min(x, width - padR); }
+      parts.push('<text x="' + x.toFixed(2) + '" y="' + (42 + tag.lane * 13) + '" text-anchor="' + anchor + '" font-size="11" fill="' + tag.color + '" stroke="#faf6ee" stroke-width="3" paint-order="stroke">' + esc(tag.text) + '</text>');
+    });
+
+    [0, 0.5, 1].forEach(function (t) {
+      var p = pMin * Math.pow(pMax / pMin, t);
+      var x = xOf(p);
+      parts.push('<text x="' + x.toFixed(2) + '" y="' + (height - 8) + '" text-anchor="middle" font-size="11" fill="#5e564c">$' + compact(p) + '</text>');
+    });
+    parts.push('</svg>');
+    return parts.join('');
+  }
+
+  function resultsHtml(model) {
+    var burnNow = model.winner.price * A.demandAt(model.knots, model.winner.price);
+    var burnMax = model.pStar.burn;
+    var efficiency = burnMax > 0 ? burnNow / burnMax : 0;
+    return '<div class="hero">' +
+      '<article><h2>Selected fee</h2><p class="hero-value" data-testid="selected-fee">' + money(model.winner.price) + '</p>' +
+      '<p class="sub" data-testid="selected-revenue">' + money(model.winner.revenue) + ' revenue</p></article>' +
+      '<article><h2>Optimal fee</h2><p class="hero-value" data-testid="optimal-fee">' + money(model.pStar.price) + '</p>' +
+      '<p class="sub">Causes the max possible revenue of <span data-testid="optimal-burn">' + money(model.pStar.burn) + '</span></p></article>' +
+      '<article><h2>Controller efficiency</h2><p class="hero-value" data-testid="efficiency">' + percent(efficiency) + '</p></article>' +
+      '</div>' +
+      tableHtml(model) +
+      bluffHtml(model) +
+      '<article class="card chart-card"><h2>True demand and burn</h2>' + chartSvg(model) +
+      '<ul class="legend"><li><i class="swatch"></i> Demand</li><li><i class="swatch burn"></i> REP burn</li>' +
+      '<li><i class="swatch arm"></i> Arms</li><li><i class="swatch current"></i> Current fee</li>' +
+      '<li><i class="swatch dot"></i> Selected</li><li><i class="swatch diamond"></i> Optimal</li></ul></article>' +
+      honestyHtml(model);
+  }
+
+  function knotsForCalc() {
+    if (!knotTable.querySelector('tbody tr')) return knots;
+    var draft = readRows();
+    if (draft.incomplete) return knots;
+    var norm = A.normalizeKnots(draft.rows);
+    return norm.ok ? norm.knots : knots;
+  }
+
+  function render() {
+    var model = A.evaluate({ C: C, h: h, k: k, knots: knotsForCalc() });
+    var results = document.getElementById('results');
+    document.getElementById('elasticity').textContent = 'e = ' + formatE(k);
+    if (!model.ok) {
+      results.innerHTML = '<article class="card"><p class="note error">' + esc(model.error) + '</p></article>';
+      return;
+    }
+    document.getElementById('floor-warning').hidden = !model.floorWarning;
+    model.unbluffedWinner = model.winner;
+    var settled = model.bestBluff && !bluffDisabled ? A.applyBluff(model, model.bestBluff) : model;
+    winningPrice = Math.max(1, Math.round(settled.winner.price));
+    results.innerHTML = resultsHtml(settled);
+  }
+
+  function commitQuantities() {
+    var draft = readRows();
+    if (draft.incomplete) return;
+    var norm = A.normalizeKnots(draft.rows);
+    if (!norm.ok) {
+      showKnotError(norm.error);
+      return;
+    }
+    hideKnotError();
+    adoptDisplayed(norm.knots);
+    if (norm.clamped) flash('Demand must not rise with price.');
+    else if (norm.negative) flash('Demand cannot be negative.');
+    else clearNote();
+    writeQty(knots);
+    render();
+  }
+
+  function commitPrices() {
+    var draft = readRows();
+    if (draft.incomplete) return;
+    var norm = A.normalizeKnots(draft.rows);
+    if (!norm.ok) {
+      showKnotError(norm.error);
+      return;
+    }
+    hideKnotError();
+    var active = document.activeElement;
+    var activeIndex = active && active.getAttribute ? active.getAttribute('data-index') : null;
+    var activeClass = '';
+    if (active && active.classList) {
+      if (active.classList.contains('knot-qty')) activeClass = 'knot-qty';
+      else if (active.classList.contains('knot-price')) activeClass = 'knot-price';
+    }
+    var orderChanged = norm.knots.length !== knots.length || norm.knots.some(function (knot, index) {
+      return !knots[index] || knot.price !== knots[index].price;
+    });
+    adoptDisplayed(norm.knots);
+    if (norm.clamped) flash('Demand must not rise with price.');
+    else if (norm.negative) flash('Demand cannot be negative.');
+    if (orderChanged || norm.clamped) {
+      renderKnots();
+      if (activeClass && activeIndex !== null) {
+        var field = knotTable.querySelector('.' + activeClass + '[data-index="' + activeIndex + '"]');
+        if (field) field.focus();
+      }
+    }
+    render();
+  }
+
+  fee.addEventListener('input', function () {
+    var value = Number(fee.value);
+    if (!(value > 0)) return;
+    C = value;
+    render();
+  });
+  document.getElementById('next-month').addEventListener('click', function () {
+    C = winningPrice;
+    fee.value = formatWhole(C);
+    render();
+  });
+
+  fee.addEventListener('blur', function () {
+    var roundedFee = Math.round(Number(fee.value));
+    if (!(roundedFee > 0)) roundedFee = Math.max(1, Math.round(C));
+    C = roundedFee;
+    fee.value = formatWhole(C);
+    render();
+  });
+
+  honestRange.addEventListener('input', function () {
+    h = Number(honestRange.value) / 100;
+    honestNumber.value = honestRange.value;
+    render();
+  });
+  honestNumber.addEventListener('input', function () {
+    if (honestNumber.value.trim() === '') return;
+    var value = Number(honestNumber.value);
+    if (!isFinite(value)) return;
+    value = Math.round(Math.min(100, Math.max(0, value)));
+    honestNumber.value = String(value);
+    h = value / 100;
+    honestRange.value = String(value);
+    render();
+  });
+
+  floorRange.addEventListener('input', function () {
+    k = Math.min(0.4999, Math.max(0, Number(floorRange.value)));
+    if (document.activeElement !== floorNumber) floorNumber.value = formatPlain(k);
+    render();
+  });
+  floorNumber.addEventListener('input', function () {
+    if (floorNumber.value.trim() === '') return;
+    var value = Number(floorNumber.value);
+    if (!isFinite(value)) return;
+    k = Math.min(0.4999, Math.max(0, value));
+    floorRange.value = String(k);
+    render();
+  });
+  floorNumber.addEventListener('blur', function () {
+    floorNumber.value = formatPlain(k);
+  });
+
+  function applyCreatorPercent(percent, fromSlider) {
+    percent = Math.min(CREATOR_MAX, Math.max(CREATOR_MIN, percent));
+    percent = Math.round(percent * 1000) / 1000;
+    creatorFee = percent / 100;
+    if (!fromSlider) creatorRange.value = String(sliderFromCreatorPercent(percent));
+    if (document.activeElement !== creatorNumber) creatorNumber.value = formatCreator(percent);
+    knots = projectKnots();
+    renderKnots();
+  }
+  creatorRange.addEventListener('input', function () {
+    applyCreatorPercent(creatorPercentFromSlider(creatorRange.value), true);
+    render();
+  });
+  creatorNumber.addEventListener('input', function () {
+    if (creatorNumber.value.trim() === '') return;
+    var value = Number(creatorNumber.value);
+    if (!isFinite(value)) return;
+    applyCreatorPercent(value, false);
+    render();
+  });
+  creatorNumber.addEventListener('blur', function () {
+    creatorNumber.value = formatCreator(creatorFee * 100);
+  });
+
+  function setDemandPercent(percent) {
+    percent = Math.min(200, Math.max(1, percent));
+    demandPercent = percent;
+    demandRange.value = String(percent);
+    if (document.activeElement !== demandNumber) demandNumber.value = formatWhole(percent);
+    knots = projectKnots();
+    renderKnots();
+  }
+  demandRange.addEventListener('input', function () {
+    setDemandPercent(Number(demandRange.value));
+    render();
+  });
+  demandNumber.addEventListener('input', function () {
+    if (demandNumber.value.trim() === '') return;
+    var value = Number(demandNumber.value);
+    if (!isFinite(value)) return;
+    setDemandPercent(value);
+    render();
+  });
+  demandNumber.addEventListener('blur', function () {
+    demandNumber.value = formatWhole(demandPercent);
+  });
+
+  function steppedWhole(value, up, minimum) {
+    var current = Math.round(Number(value));
+    if (!isFinite(current)) current = minimum;
+    var next = Math.round(current * (up ? 1.1 : 1 / 1.1));
+    if (next === current) next = current + (up ? 1 : -1);
+    if (next < minimum) next = minimum;
+    return next;
+  }
+
+  function stepKnotField(input, up) {
+    var minimum = input.classList.contains('knot-price') ? 1 : 0;
+    input.value = String(steppedWhole(input.value, up, minimum));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  knotTable.addEventListener('keydown', function (event) {
+    var input = event.target;
+    if (!input.classList) return;
+    if (!input.classList.contains('knot-price') && !input.classList.contains('knot-qty')) return;
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    stepKnotField(input, event.key === 'ArrowUp');
+  });
+
+  knotTable.addEventListener('mousedown', function (event) {
+    var input = event.target;
+    if (!input.classList) return;
+    if (!input.classList.contains('knot-price') && !input.classList.contains('knot-qty')) return;
+    if (event.offsetX < input.clientWidth - 20) return;
+    event.preventDefault();
+    stepKnotField(input, event.offsetY < input.clientHeight / 2);
+    input.focus();
+  });
+
+  knotTable.addEventListener('input', function (event) {
+    var input = event.target;
+    if (input.classList.contains('knot-qty')) {
+      commitQuantities();
+      return;
+    }
+    if (input.classList.contains('knot-price')) {
+      var draft = readRows();
+      if (draft.incomplete) return;
+      var norm = A.normalizeKnots(draft.rows);
+      if (!norm.ok) {
+        showKnotError(norm.error);
+        return;
+      }
+      hideKnotError();
+      render();
+    }
+  });
+
+  knotTable.addEventListener('focusout', function (event) {
+    var input = event.target;
+    if (!input.classList) return;
+    if (input.classList.contains('knot-qty')) {
+      var index = Number(input.getAttribute('data-index'));
+      if ((input.value.trim() === '' || !isFinite(Number(input.value))) && knots[index]) {
+        input.value = formatWhole(knots[index].qty);
+        hideKnotError();
+      }
+      return;
+    }
+    if (!input.classList.contains('knot-price')) return;
+    clearTimeout(priceCommit);
+    priceCommit = setTimeout(commitPrices, 0);
+  });
+
+  knotTable.addEventListener('click', function (event) {
+    var button = event.target.closest('[data-remove]');
+    if (!button || button.disabled) return;
+    clearTimeout(priceCommit);
+    var draft = readRows();
+    var norm = draft.incomplete ? null : A.normalizeKnots(draft.rows);
+    var list = norm && norm.ok ? norm.knots : knots.map(function (knot) { return { price: knot.price, qty: knot.qty }; });
+    if (list.length <= 2) return;
+    list.splice(Number(button.getAttribute('data-remove')), 1);
+    var again = A.normalizeKnots(list);
+    adoptDisplayed(again.ok ? again.knots : list);
+    hideKnotError();
+    if (again.clamped) flash('Demand must not rise with price.');
+    else clearNote();
+    renderKnots();
+    render();
+  });
+
+  document.getElementById('add-knot').addEventListener('click', function () {
+    clearTimeout(priceCommit);
+    commitPrices();
+    var last = baseKnots[baseKnots.length - 1];
+    var price = last.price * 1.5;
+    var guard = 0;
+    while (baseKnots.some(function (knot) { return knot.price === price; }) && guard < 8) {
+      price *= 1.5;
+      guard += 1;
+    }
+    var norm = A.normalizeKnots(baseKnots.concat([{ price: price, qty: last.qty }]));
+    baseKnots = norm.knots;
+    knots = projectKnots();
+    hideKnotError();
+    renderKnots();
+    render();
+  });
+
+  document.getElementById('sort-knots').addEventListener('click', function () {
+    clearTimeout(priceCommit);
+    var draft = readRows();
+    if (draft.incomplete) return;
+    var norm = A.normalizeKnots(draft.rows);
+    if (!norm.ok) {
+      showKnotError(norm.error);
+      return;
+    }
+    hideKnotError();
+    adoptDisplayed(norm.knots);
+    if (norm.clamped) flash('Demand must not rise with price.');
+    else clearNote();
+    renderKnots();
+    render();
+  });
+
+  function loadPreset(next) {
+    clearTimeout(priceCommit);
+    C = next.C;
+    h = next.h;
+    k = next.k;
+    var creatorPercent = next.creatorPercent == null ? 1 : next.creatorPercent;
+    creatorFee = creatorPercent / 100;
+    demandPercent = 10;
+    baseKnots = A.cloneKnots(next.knots);
+    knots = projectKnots();
+    fee.value = formatWhole(C);
+    honestRange.value = String(Math.round(h * 100));
+    honestNumber.value = String(Math.round(h * 100));
+    floorRange.value = String(k);
+    floorNumber.value = k.toFixed(2);
+    creatorRange.value = String(sliderFromCreatorPercent(creatorPercent));
+    creatorNumber.value = formatCreator(creatorPercent);
+    demandRange.value = '10';
+    demandNumber.value = '10';
+    clearNote();
+    hideKnotError();
+    renderKnots();
+    render();
+  }
+
+  document.getElementById('preset-poly').addEventListener('click', function () {
+    clearTimeout(priceCommit);
+    baseKnots = A.cloneKnots(A.PRESETS.polymarket.knots);
+    knots = projectKnots();
+    clearNote();
+    hideKnotError();
+    renderKnots();
+    render();
+  });
+  document.getElementById('preset-toy').addEventListener('click', function () {
+    loadPreset(A.PRESETS.polymarket);
+  });
+
+  document.getElementById('results').addEventListener('change', function (event) {
+    if (event.target.id !== 'disable-bluff') return;
+    bluffDisabled = event.target.checked;
+    render();
+  });
+
+  creatorRange.value = String(sliderFromCreatorPercent(creatorFee * 100));
+  creatorNumber.value = formatCreator(creatorFee * 100);
+  renderKnots();
+  render();
+})();
