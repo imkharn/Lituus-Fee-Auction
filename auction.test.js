@@ -270,6 +270,29 @@ test('creator fee scales the optimal query fee and a quantity scale would not', 
   assert.ok(Math.abs(shrunk.pStar.price - 40) < 1e-6, shrunk.pStar.price);
 });
 
+test('scaling the current fee with the creator fee leaves auction mechanics unchanged', function () {
+  var knots = A.cloneKnots(A.PRESETS.polymarket.knots);
+  var feeA = 0.0007;
+  var feeB = 0.0021;
+  var scale = feeB / feeA;
+  var a = A.evaluate({ C: 40, h: 0.35, k: 0.4, knots: knots, creatorFee: feeA });
+  var b = A.evaluate({ C: 40 * scale, h: 0.35, k: 0.4, knots: knots, creatorFee: feeB });
+  assert.strictEqual(a.ok, true);
+  assert.strictEqual(b.ok, true);
+  assert.strictEqual(b.winner.id, a.winner.id);
+  assert.strictEqual(b.hStar, a.hStar);
+  assert.strictEqual(b.hBluff, a.hBluff);
+  assert.strictEqual(b.hStarPick && b.hStarPick.id, a.hStarPick && a.hStarPick.id);
+  assert.strictEqual(b.bestBluff && b.bestBluff.armId, a.bestBluff && a.bestBluff.armId);
+  assert.ok(Math.abs(b.pStar.price / a.pStar.price - scale) < 1e-9, b.pStar.price / a.pStar.price);
+  a.arms.forEach(function (arm, i) {
+    assert.ok(Math.abs(b.arms[i].total - arm.total) < 1e-6, arm.id);
+    assert.ok(Math.abs(b.arms[i].revenue / arm.revenue - scale) < 1e-6, arm.id);
+  });
+  var sticky = A.evaluate({ C: 40, h: 0.35, k: 0.4, knots: knots, creatorFee: feeB });
+  assert.notStrictEqual(sticky.hStar, a.hStar);
+});
+
 test('normalize sorts by price and clamps rising quantities', function () {
   var result = A.normalizeKnots([
     { price: 40, qty: 10 },
