@@ -51,11 +51,11 @@
   }
 
   /* 50 is neutral. Each side of the optimum has its own blend amount.
-     Below-optimum uses twice the blend span so that slider reaches farther. */
+     Below-optimum uses twice the base span; both sides then get +50% range. */
   function sensitivityBlend(position) {
     var t = (Number(position) - 50) / 50;
     if (!isFinite(t)) return 0;
-    return Math.max(-1, Math.min(1, t));
+    return Math.max(-1, Math.min(1, t)) * 1.5;
   }
 
   function sensitivityBlendBelow(position) {
@@ -69,11 +69,13 @@
     return 'higher';
   }
 
-  /* Below p*: mild then deeper downward slopes. Above p*: steeper drop.
-     Both pass through D(p*), so the revenue-maximizing fee stays put. */
+  /* Below p*: mild then deeper downward slopes. Above p*: steeper then
+     deeper drop. Both pass through D(p*), so the revenue-maximizing fee stays. */
   var SENSITIVITY_LEFT_E = 0.45;
   var SENSITIVITY_LEFT_DEEP_E = 0.18;
+  var SENSITIVITY_LEFT_DEEPER_E = 0.08;
   var SENSITIVITY_RIGHT_E = 2.4;
+  var SENSITIVITY_RIGHT_DEEP_E = 3.6;
 
   function sensitivityTargetQty(price, pStar, qStar, elasticity) {
     return qStar * Math.pow(pStar / Math.max(price, 1e-9), elasticity);
@@ -85,17 +87,20 @@
     return 0;
   }
 
-  /* Below-optimum blend spans 0..2: first to the mild floor, then to a deeper
-     sloping floor. Above-optimum stays on a 0..1 blend to its steep target. */
+  /* Below spans ~0..3 (mild → deep → deeper). Above spans ~0..1.5 (steep → deeper). */
   function applyPositiveBlend(qty, price, pStar, qStar, blend, belowSide) {
     if (belowSide) {
       var mild = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_E);
       if (blend <= 1) return qty + blend * (mild - qty);
       var deep = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_DEEP_E);
-      return mild + (blend - 1) * (deep - mild);
+      if (blend <= 2) return mild + (blend - 1) * (deep - mild);
+      var deeper = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_DEEPER_E);
+      return deep + (blend - 2) * (deeper - deep);
     }
     var target = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_E);
-    return qty + Math.min(blend, 1) * (target - qty);
+    if (blend <= 1) return qty + blend * (target - qty);
+    var deepRight = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_DEEP_E);
+    return target + (blend - 1) * (deepRight - target);
   }
 
   function invertPositiveBlend(qty, price, pStar, qStar, blend, belowSide) {
@@ -107,8 +112,10 @@
       return mild;
     }
     var target = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_E);
-    var used = Math.min(blend, 1);
-    return Math.abs(used - 1) > 1e-9 ? (qty - used * target) / (1 - used) : qty;
+    if (blend <= 1) {
+      return Math.abs(blend - 1) > 1e-9 ? (qty - blend * target) / (1 - blend) : qty;
+    }
+    return target;
   }
 
   /* Reshape around the revenue-maximizing fee. Demand there stays put.
@@ -131,7 +138,7 @@
         if (blend > 0) {
           qty = applyPositiveBlend(knot.qty, knot.price, pStar, qStar, blend, knot.price < pStar);
         } else {
-          var alpha = Math.min(0.85, -blend);
+          var alpha = Math.min(0.95, -blend);
           var flatQty = flatBurn / knot.price;
           qty = (1 - alpha) * knot.qty + alpha * flatQty;
         }
@@ -174,7 +181,7 @@
         if (blend > 0) {
           qty = invertPositiveBlend(knot.qty, knot.price, pStar, qStar, blend, knot.price < pStar);
         } else {
-          var alpha = Math.min(0.85, -blend);
+          var alpha = Math.min(0.95, -blend);
           var flatQty = flatBurn / Math.max(knot.price, 1e-9);
           qty = alpha < 0.999 ? (knot.qty - alpha * flatQty) / (1 - alpha) : knot.qty;
         }
@@ -441,9 +448,17 @@
       '</div></article>';
   }
 
+  function floorWarningNote(model) {
+    if (!model.floorWarning) return '';
+    var nowEff = controllerEfficiency(model.winner.price, model);
+    var freeEff = efficiencyWithoutHonestCap(model);
+    if (!(freeEff - nowEff >= 0.01 - 1e-15)) return '';
+    return '<p class="note" data-testid="floor-warning">The minimum demand rule is causing honest bidders to have to bid more quantity than they prefer for higher prices. They are reacting by reporting their demand honestly on the highest price and bidding the max amount allowed on all lower prices. As a result overall demand is artifically reduced causing efficiency to be ' +
+      percent(nowEff) + ' instead of ' + percent(freeEff) + '</p>';
+  }
+
   function tableHtml(model) {
     var maxRev = model.arms.reduce(function (max, arm) { return Math.max(max, arm.revenue); }, 0) || 1;
-    var capped = model.arms.some(function (arm) { return arm.honestCapped; });
     var showCall = model.arms.some(function (arm) { return arm.bluff > 0; });
     var head = '<tr><th>Arm</th><th>Price</th><th>Honest qty</th><th>Shade qty</th>' +
       (showCall ? '<th>Caller qty</th>' : '') +
@@ -462,10 +477,9 @@
         '<td>' + money(arm.revenue) + '<div class="bar" aria-hidden="true"><span style="width:' + width.toFixed(1) + '%"></span></div></td>' +
         '</tr>';
     }).join('');
-    var foot = capped ? '<p class="sub">Lower honest bids are as high as the floor allows. The highest price stays at true demand.</p>' : '';
     var caption = showCall ? 'Reported book, with the bluff-caller' : 'Reported book';
     return '<article class="card"><h2>' + caption + '</h2><div class="table-wrap"><table class="book">' +
-      head + body + '</table></div>' + foot + '</article>';
+      head + body + '</table></div>' + floorWarningNote(model) + '</article>';
   }
 
   function chartSvg(model) {
@@ -665,17 +679,6 @@
     return controllerEfficiency(settled.winner.price, model);
   }
 
-  function updateFloorWarning(model, settled) {
-    var el = document.getElementById('floor-warning');
-    var show = !!model.floorWarning;
-    el.hidden = !show;
-    if (!show) return;
-    var nowEff = controllerEfficiency(settled.winner.price, model);
-    var freeEff = efficiencyWithoutHonestCap(model);
-    el.textContent = 'The minimum demand rule is causing honest bidders to have to bid more quantity than they want to for higher prices. They are reacting by reporting their demand honestly on the highest price and bidding the max amount allowed on all lower prices. As a result overall demand is artifically reduced causing efficiency to be ' +
-      percent(nowEff) + ' instead of ' + percent(freeEff);
-  }
-
   function render() {
     var model = A.evaluate({ C: C, h: h, k: k, knots: knotsForCalc() });
     var results = document.getElementById('results');
@@ -687,7 +690,6 @@
     model.unbluffedWinner = model.winner;
     var settled = model.bestBluff && !bluffDisabled ? A.applyBluff(model, model.bestBluff) : model;
     winningPrice = Math.max(1, Math.round(settled.winner.price));
-    updateFloorWarning(model, settled);
     results.innerHTML = resultsHtml(settled);
   }
 
