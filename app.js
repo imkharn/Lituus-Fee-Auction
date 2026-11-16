@@ -69,57 +69,110 @@
     return 'higher';
   }
 
-  /* Below p*: mild then deeper downward slopes. Above p*: steeper then
-     deeper drop. Both pass through D(p*), so the revenue-maximizing fee stays. */
-  var SENSITIVITY_LEFT_E = 0.45;
-  var SENSITIVITY_LEFT_DEEP_E = 0.18;
-  var SENSITIVITY_LEFT_DEEPER_E = 0.08;
-  var SENSITIVITY_RIGHT_E = 2.4;
-  var SENSITIVITY_RIGHT_DEEP_E = 3.6;
+  /* Reshape fades in with log-distance from p*, so revenue stays rounded near
+     the peak and the sliders bite harder farther out (more bell-like burn). */
+  var SENSITIVITY_SIGMA = 0.95;
+  var SENSITIVITY_ABOVE_MAX = 1.5;
+  var SENSITIVITY_BELOW_MAX = 3;
+
+  function logDistanceWeight(price, pStar) {
+    if (!(price > 0) || !(pStar > 0)) return 0;
+    var x = Math.log(price / pStar);
+    return 1 - Math.exp(-(x * x) / (2 * SENSITIVITY_SIGMA * SENSITIVITY_SIGMA));
+  }
 
   function sensitivityTargetQty(price, pStar, qStar, elasticity) {
     return qStar * Math.pow(pStar / Math.max(price, 1e-9), elasticity);
   }
 
-  function blendForPrice(price, pStar, blendBelow, blendAbove) {
-    if (price < pStar) return blendBelow;
-    if (price > pStar) return blendAbove;
-    return 0;
+  function aboveElasticity(blend) {
+    var t = Math.min(1, Math.max(0, blend / SENSITIVITY_ABOVE_MAX));
+    return 1.1 + t * 2.8;
   }
 
-  /* Below spans ~0..3 (mild → deep → deeper). Above spans ~0..1.5 (steep → deeper). */
-  function applyPositiveBlend(qty, price, pStar, qStar, blend, belowSide) {
-    if (belowSide) {
-      var mild = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_E);
-      if (blend <= 1) return qty + blend * (mild - qty);
-      var deep = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_DEEP_E);
-      if (blend <= 2) return mild + (blend - 1) * (deep - mild);
-      var deeper = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_DEEPER_E);
-      return deep + (blend - 2) * (deeper - deep);
-    }
-    var target = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_E);
-    if (blend <= 1) return qty + blend * (target - qty);
-    var deepRight = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_DEEP_E);
-    return target + (blend - 1) * (deepRight - target);
+  function belowElasticity(blend) {
+    var t = Math.min(1, Math.max(0, blend / SENSITIVITY_BELOW_MAX));
+    return 0.55 - t * 0.47;
   }
 
-  function invertPositiveBlend(qty, price, pStar, qStar, blend, belowSide) {
-    if (belowSide) {
-      var mild = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_LEFT_E);
-      if (blend <= 1) {
-        return Math.abs(blend - 1) > 1e-9 ? (qty - blend * mild) / (1 - blend) : qty;
+  function sideStrength(blend, maxBlend) {
+    if (!(blend > 0)) return 0;
+    return Math.min(0.95, blend / maxBlend);
+  }
+
+  function blendToward(qty, target, strength, weight) {
+    var mix = Math.min(0.95, Math.max(0, strength) * Math.max(0, weight));
+    return (1 - mix) * qty + mix * target;
+  }
+
+  function unblendToward(qty, target, strength, weight) {
+    var mix = Math.min(0.95, Math.max(0, strength) * Math.max(0, weight));
+    if (mix >= 0.999) return qty;
+    return (qty - mix * target) / (1 - mix);
+  }
+
+  function reshapeQty(qty, price, pStar, qStar, blendBelow, blendAbove) {
+    if (!(price > 0) || !(pStar > 0)) return qty;
+    var weight = logDistanceWeight(price, pStar);
+    if (weight < 1e-12) return qty;
+    var flatQty = (pStar * qStar) / Math.max(price, 1e-9);
+    if (price > pStar && Math.abs(blendAbove) >= 1e-12) {
+      if (blendAbove > 0) {
+        return blendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, aboveElasticity(blendAbove)),
+          sideStrength(blendAbove, SENSITIVITY_ABOVE_MAX),
+          weight
+        );
       }
-      return mild;
+      return blendToward(qty, flatQty, Math.min(0.95, -blendAbove), weight);
     }
-    var target = sensitivityTargetQty(price, pStar, qStar, SENSITIVITY_RIGHT_E);
-    if (blend <= 1) {
-      return Math.abs(blend - 1) > 1e-9 ? (qty - blend * target) / (1 - blend) : qty;
+    if (price < pStar && Math.abs(blendBelow) >= 1e-12) {
+      if (blendBelow > 0) {
+        return blendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, belowElasticity(blendBelow)),
+          sideStrength(blendBelow, SENSITIVITY_BELOW_MAX),
+          weight
+        );
+      }
+      return blendToward(qty, flatQty, Math.min(0.95, -blendBelow), weight);
     }
-    return target;
+    return qty;
+  }
+
+  function unshapeQty(qty, price, pStar, qStar, blendBelow, blendAbove) {
+    if (!(price > 0) || !(pStar > 0)) return qty;
+    var weight = logDistanceWeight(price, pStar);
+    if (weight < 1e-12) return qty;
+    var flatQty = (pStar * qStar) / Math.max(price, 1e-9);
+    if (price > pStar && Math.abs(blendAbove) >= 1e-12) {
+      if (blendAbove > 0) {
+        return unblendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, aboveElasticity(blendAbove)),
+          sideStrength(blendAbove, SENSITIVITY_ABOVE_MAX),
+          weight
+        );
+      }
+      return unblendToward(qty, flatQty, Math.min(0.95, -blendAbove), weight);
+    }
+    if (price < pStar && Math.abs(blendBelow) >= 1e-12) {
+      if (blendBelow > 0) {
+        return unblendToward(
+          qty,
+          sensitivityTargetQty(price, pStar, qStar, belowElasticity(blendBelow)),
+          sideStrength(blendBelow, SENSITIVITY_BELOW_MAX),
+          weight
+        );
+      }
+      return unblendToward(qty, flatQty, Math.min(0.95, -blendBelow), weight);
+    }
+    return qty;
   }
 
   /* Reshape around the revenue-maximizing fee. Demand there stays put.
-     Each slider blends only its side of the curve. */
+     Each slider blends only its side, weighted by distance from the peak. */
   function reshapeAroundPeak(rows, blendBelow, blendAbove) {
     if (!rows.length) return [];
     var shaped = rows.map(function (knot) {
@@ -130,19 +183,8 @@
     if (!peak || !(peak.price > 0)) return shaped;
     var pStar = peak.price;
     var qStar = Math.max(0, peak.quantity);
-    var flatBurn = pStar * qStar;
     shaped = shaped.map(function (knot) {
-      var blend = blendForPrice(knot.price, pStar, blendBelow, blendAbove);
-      var qty = knot.qty;
-      if (Math.abs(blend) >= 1e-12) {
-        if (blend > 0) {
-          qty = applyPositiveBlend(knot.qty, knot.price, pStar, qStar, blend, knot.price < pStar);
-        } else {
-          var alpha = Math.min(0.95, -blend);
-          var flatQty = flatBurn / knot.price;
-          qty = (1 - alpha) * knot.qty + alpha * flatQty;
-        }
-      }
+      var qty = reshapeQty(knot.qty, knot.price, pStar, qStar, blendBelow, blendAbove);
       return { price: knot.price, qty: Math.max(0, qty) };
     });
     shaped = shaped.map(function (knot) {
@@ -173,19 +215,8 @@
     }
     var pStar = peak.price;
     var qStar = Math.max(0, peak.quantity);
-    var flatBurn = pStar * qStar;
     return displayed.map(function (knot) {
-      var blend = blendForPrice(knot.price, pStar, blendBelow, blendAbove);
-      var qty = knot.qty;
-      if (Math.abs(blend) >= 1e-12) {
-        if (blend > 0) {
-          qty = invertPositiveBlend(knot.qty, knot.price, pStar, qStar, blend, knot.price < pStar);
-        } else {
-          var alpha = Math.min(0.95, -blend);
-          var flatQty = flatBurn / Math.max(knot.price, 1e-9);
-          qty = alpha < 0.999 ? (knot.qty - alpha * flatQty) / (1 - alpha) : knot.qty;
-        }
-      }
+      var qty = unshapeQty(knot.qty, knot.price, pStar, qStar, blendBelow, blendAbove);
       return { price: knot.price, qty: Math.max(0, qty) };
     });
   }
