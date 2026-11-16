@@ -629,6 +629,53 @@
     return norm.ok ? norm.knots : knots;
   }
 
+  function controllerEfficiency(price, model) {
+    var burnMax = model.pStar.burn;
+    if (!(burnMax > 0) || !(price > 0)) return 0;
+    return price * A.demandAt(model.knots, price) / burnMax;
+  }
+
+  /* Efficiency if honest bids stayed at h·D(p) instead of being floor-capped. */
+  function efficiencyWithoutHonestCap(model) {
+    var arms = model.arms.map(function (arm) {
+      var honest = arm.honestRaw;
+      var total = honest + arm.shade;
+      return {
+        id: arm.id,
+        label: arm.label,
+        price: arm.price,
+        honest: honest,
+        honestRaw: honest,
+        honestCapped: false,
+        shade: arm.shade,
+        bluff: 0,
+        total: total,
+        revenue: arm.price * total
+      };
+    });
+    var freeModel = Object.assign({}, model, {
+      arms: arms,
+      winner: A.pickWinner(arms, model.C)
+    });
+    var settled = freeModel;
+    if (!bluffDisabled) {
+      var rational = A.rationalBluffs(arms, model.C, model.pStar.price, model.knots);
+      if (rational.length) settled = A.applyBluff(freeModel, rational[0]);
+    }
+    return controllerEfficiency(settled.winner.price, model);
+  }
+
+  function updateFloorWarning(model, settled) {
+    var el = document.getElementById('floor-warning');
+    var show = !!model.floorWarning;
+    el.hidden = !show;
+    if (!show) return;
+    var nowEff = controllerEfficiency(settled.winner.price, model);
+    var freeEff = efficiencyWithoutHonestCap(model);
+    el.textContent = 'The minimum demand rule is causing honest bidders to have to bid more quantity than they want to for higher prices. They are reacting by reporting their demand honestly on the highest price and bidding the max amount allowed on all lower prices. As a result overall demand is artifically reduced causing efficiency to be ' +
+      percent(nowEff) + ' instead of ' + percent(freeEff);
+  }
+
   function render() {
     var model = A.evaluate({ C: C, h: h, k: k, knots: knotsForCalc() });
     var results = document.getElementById('results');
@@ -637,10 +684,10 @@
       results.innerHTML = '<article class="card"><p class="note error">' + esc(model.error) + '</p></article>';
       return;
     }
-    document.getElementById('floor-warning').hidden = !model.floorWarning;
     model.unbluffedWinner = model.winner;
     var settled = model.bestBluff && !bluffDisabled ? A.applyBluff(model, model.bestBluff) : model;
     winningPrice = Math.max(1, Math.round(settled.winner.price));
+    updateFloorWarning(model, settled);
     results.innerHTML = resultsHtml(settled);
   }
 

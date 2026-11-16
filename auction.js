@@ -543,6 +543,8 @@
     closestDistance: closestDistance,
     evaluate: evaluate,
     applyBluff: applyBluff,
-    quoteBluff: quoteBluff
+    quoteBluff: quoteBluff,
+    pickWinner: pickWinner,
+    rationalBluffs: rationalBluffs
   };
 });
