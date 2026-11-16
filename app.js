@@ -50,11 +50,16 @@
     return rounded >= 0.1 ? rounded.toFixed(2) : rounded.toFixed(3);
   }
 
-  /* 50 is neutral. Each side of the optimum has its own blend amount. */
+  /* 50 is neutral. Each side of the optimum has its own blend amount.
+     Below-optimum uses twice the blend span so that slider reaches farther. */
   function sensitivityBlend(position) {
     var t = (Number(position) - 50) / 50;
     if (!isFinite(t)) return 0;
     return Math.max(-1, Math.min(1, t));
+  }
+
+  function sensitivityBlendBelow(position) {
+    return sensitivityBlend(position) * 2;
   }
 
   function sensitivityLabel(position) {
@@ -99,7 +104,7 @@
       if (Math.abs(blend) >= 1e-12) {
         if (blend > 0) {
           var target = sensitivityTargetQty(knot.price, pStar, qStar);
-          qty = (1 - blend) * knot.qty + blend * target;
+          qty = knot.qty + blend * (target - knot.qty);
         } else {
           var alpha = Math.min(0.85, -blend);
           var flatQty = flatBurn / knot.price;
@@ -120,7 +125,7 @@
   }
 
   function unshapeDisplayed(displayed) {
-    var blendBelow = sensitivityBlend(sensitivityBelow);
+    var blendBelow = sensitivityBlendBelow(sensitivityBelow);
     var blendAbove = sensitivityBlend(sensitivityAbove);
     if (!displayed.length || (Math.abs(blendBelow) < 1e-12 && Math.abs(blendAbove) < 1e-12)) {
       return displayed.map(function (knot) {
@@ -143,7 +148,9 @@
       if (Math.abs(blend) >= 1e-12) {
         if (blend > 0) {
           var target = sensitivityTargetQty(knot.price, pStar, qStar);
-          qty = blend < 0.999 ? (knot.qty - blend * target) / (1 - blend) : knot.qty;
+          qty = Math.abs(blend - 1) > 1e-9
+            ? (knot.qty - blend * target) / (1 - blend)
+            : knot.qty;
         } else {
           var alpha = Math.min(0.85, -blend);
           var flatQty = flatBurn / Math.max(knot.price, 1e-9);
@@ -173,7 +180,7 @@
   function projectKnots() {
     return reshapeAroundPeak(
       scaleOnlyKnots(),
-      sensitivityBlend(sensitivityBelow),
+      sensitivityBlendBelow(sensitivityBelow),
       sensitivityBlend(sensitivityAbove)
     );
   }
