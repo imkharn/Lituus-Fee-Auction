@@ -1023,6 +1023,12 @@
 
   document.getElementById('preset-poly').addEventListener('click', function () {
     clearTimeout(priceCommit);
+    sensitivityAbove = 50;
+    sensitivityBelow = 50;
+    sensitivityAboveRange.value = '50';
+    sensitivityAboveRange.setAttribute('aria-valuetext', 'neutral');
+    sensitivityBelowRange.value = '50';
+    sensitivityBelowRange.setAttribute('aria-valuetext', 'neutral');
     baseKnots = A.cloneKnots(A.PRESETS.polymarket.knots);
     knots = projectKnots();
     clearNote();

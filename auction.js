@@ -32,7 +32,7 @@
       name: 'Polymarket-like open interest',
       C: 40,
       h: 0.75,
-      k: 0.25,
+      k: 0.4,
       creatorPercent: 0.07,
       knots: [
         { price: 50, qty: 28000 },

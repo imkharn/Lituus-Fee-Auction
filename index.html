@@ -280,11 +280,11 @@
         <div class="field">
           <label class="field-label" for="floor-range">Minimum demand per doubling</label>
           <div class="pair">
-            <input id="floor-range" type="range" min="0" max="0.4999" step="0.001" value="0.25">
-            <input id="floor-number" type="number" min="0" max="0.4999" step="0.0001" value="0.25" inputmode="decimal" aria-label="Minimum demand per doubling">
+            <input id="floor-range" type="range" min="0" max="0.4999" step="0.001" value="0.4">
+            <input id="floor-number" type="number" min="0" max="0.4999" step="0.0001" value="0.4" inputmode="decimal" aria-label="Minimum demand per doubling">
           </div>
         </div>
-        <p class="assist">Elasticity <output id="elasticity">e = 2.000</output>. For every price doubling, a legal bid is required to bid at least this fraction of the quantity.</p>
+        <p class="assist">Elasticity <output id="elasticity">e = 1.322</output>. For every price doubling, a legal bid is required to bid at least this fraction of the quantity.</p>
 
         <div class="field">
           <label class="field-label" for="creator-range">Market creator fee on open interest</label>
@@ -296,7 +296,7 @@
             </span>
           </div>
         </div>
-        <p id="creator-help" class="assist">Determines the revenue maximizing fee.</p>
+        <p id="creator-help" class="assist">Determines the Optimal Fee.</p>
         <div class="field">
           <label class="field-label" for="demand-range">Percent of Polymarket demand</label>
           <div class="pair">
@@ -372,7 +372,7 @@
       <section id="results" aria-label="Auction result"></section>
     </main>
   </div>
-  <script src="auction.js?v=20261116g"></script>
-  <script src="app.js?v=20261116g"></script>
+  <script src="auction.js?v=20261116h"></script>
+  <script src="app.js?v=20261116h"></script>
 </body>
 </html>
