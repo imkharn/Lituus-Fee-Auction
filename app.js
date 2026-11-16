@@ -262,7 +262,6 @@
 
   var knots = projectKnots();
   var bluffDisabled = false;
-  var winningPrice = Math.max(1, Math.round(C));
   var noteTimer = 0;
   var priceCommit = 0;
 
@@ -283,23 +282,40 @@
     event.preventDefault();
   });
 
+  /* Fees at/above $1 stay in whole dollars. Below $1, keep 1 significant figure. */
+  function roundFee(n) {
+    if (!(n > 0) || !isFinite(n)) return NaN;
+    if (n >= 1) return Math.round(n);
+    var rounded = Number(Number(n).toPrecision(1));
+    return rounded > 0 ? rounded : n;
+  }
+
+  function formatFee(n) {
+    var rounded = roundFee(n);
+    if (!isFinite(rounded)) return '';
+    if (rounded >= 1) return String(Math.round(rounded));
+    return String(rounded);
+  }
+
   function money(n) {
     if (!isFinite(n)) n = 0;
     var abs = Math.abs(n);
     if (abs > 0 && abs < 1) {
-      var dimes = Math.round(n * 10) / 10;
-      if (Math.abs(dimes) >= 1) {
-        return Math.round(dimes).toLocaleString('en-US', {
+      var rounded = roundFee(abs);
+      if (!(rounded > 0)) rounded = abs;
+      if (rounded >= 1) {
+        return (n < 0 ? -rounded : rounded).toLocaleString('en-US', {
           style: 'currency',
           currency: 'USD',
           maximumFractionDigits: 0
         });
       }
-      return dimes.toLocaleString('en-US', {
+      var digits = Math.max(0, -Math.floor(Math.log10(rounded)));
+      return (n < 0 ? -rounded : rounded).toLocaleString('en-US', {
         style: 'currency',
         currency: 'USD',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits
       });
     }
     return Math.round(n).toLocaleString('en-US', {
@@ -328,6 +344,8 @@
     return String(Math.round(n));
   }
 
+  var winningPrice = roundFee(C);
+
   function formatE(value) {
     if (!(value > 0)) return 'no floor';
     var e = -Math.log(value) / Math.log(2);
@@ -344,9 +362,10 @@
     if (v >= 1e6) return unit(1e6, 'M');
     if (v >= 1e3) return unit(1e3, 'k');
     if (v > 0 && v < 1) {
-      var dimes = Math.round(v * 10) / 10;
-      if (dimes >= 1) return sign + '1';
-      return sign + dimes.toFixed(2);
+      var rounded = roundFee(v);
+      if (!(rounded > 0)) rounded = v;
+      if (rounded >= 1) return sign + '1';
+      return sign + String(rounded);
     }
     return sign + String(Math.round(v));
   }
@@ -725,7 +744,8 @@
     }
     model.unbluffedWinner = model.winner;
     var settled = model.bestBluff && !bluffDisabled ? A.applyBluff(model, model.bestBluff) : model;
-    winningPrice = Math.max(1, Math.round(settled.winner.price));
+    winningPrice = roundFee(settled.winner.price);
+    if (!(winningPrice > 0)) winningPrice = roundFee(C);
     results.innerHTML = resultsHtml(settled);
   }
 
@@ -785,16 +805,20 @@
     render();
   });
   document.getElementById('next-month').addEventListener('click', function () {
-    C = winningPrice;
-    fee.value = formatWhole(C);
+    var next = roundFee(winningPrice);
+    if (!(next > 0)) next = roundFee(C);
+    if (!(next > 0)) return;
+    C = next;
+    fee.value = formatFee(C);
     render();
   });
 
   fee.addEventListener('blur', function () {
-    var roundedFee = Math.round(Number(fee.value));
-    if (!(roundedFee > 0)) roundedFee = Math.max(1, Math.round(C));
+    var roundedFee = roundFee(Number(fee.value));
+    if (!(roundedFee > 0)) roundedFee = roundFee(C);
+    if (!(roundedFee > 0)) roundedFee = 1;
     C = roundedFee;
-    fee.value = formatWhole(C);
+    fee.value = formatFee(C);
     render();
   });
 
@@ -838,7 +862,7 @@
     if (creatorFee > 0 && nextFee > 0 && Math.abs(nextFee - creatorFee) > 1e-15) {
       C = C * (nextFee / creatorFee);
       if (!(C > 0) || !isFinite(C)) C = 1;
-      if (document.activeElement !== fee) fee.value = formatWhole(C);
+      if (document.activeElement !== fee) fee.value = formatFee(C);
     }
     creatorFee = nextFee;
     if (!fromSlider) creatorRange.value = String(sliderFromCreatorPercent(percent));
@@ -1044,7 +1068,7 @@
     bluffDisabled = false;
     baseKnots = A.cloneKnots(next.knots);
     knots = projectKnots();
-    fee.value = formatWhole(C);
+    fee.value = formatFee(C);
     honestRange.value = String(Math.round(h * 100));
     honestNumber.value = String(Math.round(h * 100));
     floorRange.value = String(k);
