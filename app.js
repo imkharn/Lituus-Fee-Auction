@@ -2,6 +2,13 @@
   'use strict';
 
   var A = window.FeeAuction;
+  if (!A) {
+    var resultsEl = document.getElementById('results');
+    if (resultsEl) {
+      resultsEl.innerHTML = '<article class="card"><p class="note error">The auction engine failed to load. Hard-refresh the page.</p></article>';
+    }
+    return;
+  }
   var preset = A.PRESETS.polymarket;
   var baseKnots = A.cloneKnots(preset.knots);
   var demandPercent = 10;
