@@ -134,17 +134,22 @@
     button.ghost { padding: 4px 8px; font-size: 12px; }
     .check { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; white-space: nowrap; }
     .check input { width: auto; accent-color: var(--copper); }
-    .knot-table { width: 100%; border-collapse: collapse; margin-bottom: 5px; }
+    .knot-table { width: 100%; border-collapse: collapse; margin-bottom: 5px; font-size: 13px; }
     .knot-table th {
       text-align: left;
-      font-size: 11px;
+      font-size: 9px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       font-weight: 650;
-      padding: 0 6px 4px 0;
+      padding: 0 6px 2px 0;
       border-bottom: 1px solid var(--ink);
     }
-    .knot-table td { padding: 4px 6px 0 0; vertical-align: middle; }
+    .knot-table td { padding: 2px 6px 0 0; vertical-align: middle; }
+    .knot-table input[type="number"] {
+      font-size: 13px;
+      padding: 2px 8px;
+    }
+    .knot-table button.ghost { padding: 2px 6px; font-size: 10px; }
     .unit { display: block; letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--muted); }
     .note {
       background: var(--warn-soft);
@@ -372,7 +377,7 @@
       <section id="results" aria-label="Auction result"></section>
     </main>
   </div>
-  <script src="auction.js?v=20261116i"></script>
-  <script src="app.js?v=20261116i"></script>
+  <script src="auction.js?v=20261116j"></script>
+  <script src="app.js?v=20261116j"></script>
 </body>
 </html>

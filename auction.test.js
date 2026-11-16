@@ -221,8 +221,7 @@ test('zero demand ties break toward the arm closer to the center', function () {
 
 test('outside the end prices the curve continues the end segment', function () {
   var knots = A.cloneKnots(A.PRESETS.toy.knots);
-  /* Low end is inelastic, so exterior continuation uses unit elasticity from $10. */
-  assert.ok(Math.abs(A.demandAt(knots, 5) - 2000) < 1e-6, A.demandAt(knots, 5));
+  assert.ok(Math.abs(A.demandAt(knots, 5) - 1250) < 1e-6, A.demandAt(knots, 5));
   assert.ok(Math.abs(A.demandAt(knots, 160) - 80) < 1e-6, A.demandAt(knots, 160));
   assert.ok(Math.abs(A.demandAt(knots, 20) - 800) < 1e-9);
   assert.ok(Math.abs(A.demandAt(knots, 40) - 500) < 1e-9);
@@ -241,6 +240,20 @@ test('an inelastic high end does not push the optimal fee to the search boundary
   var pStar = A.optimalFee(knots);
   assert.ok(pStar.price <= 504 + 1e-6, pStar.price);
   assert.ok(pStar.price < 504 * 8, pStar.price);
+});
+
+test('below the lowest listed price, burn still rises toward the data when the end is inelastic', function () {
+  var knots = [
+    { price: 4, qty: 2800 },
+    { price: 7, qty: 1750 },
+    { price: 42, qty: 440 }
+  ];
+  var low = 2 * A.demandAt(knots, 2);
+  var mid = 3 * A.demandAt(knots, 3);
+  var at = 4 * A.demandAt(knots, 4);
+  assert.ok(low < mid && mid < at, [low, mid, at].join(','));
+  var model = A.evaluate({ C: 2, h: 1, k: 0.4, knots: knots });
+  assert.strictEqual(model.winner.id, 'double');
 });
 
 test('creator fee scales the optimal query fee and a quantity scale would not', function () {

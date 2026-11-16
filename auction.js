@@ -107,9 +107,11 @@
   }
 
   /* Log-log between anchors. Linear demand on a segment that touches zero.
-     Outside either end, continue that end's segment. If that segment is
-     inelastic (|e| < 1), continue from the endpoint at unit elasticity so
-     burn cannot keep rising forever outside the data. Demand never goes negative. */
+     Outside either end, continue that end's segment. Above the top price, if
+     that segment is inelastic (|e| < 1), continue from the endpoint at unit
+     elasticity so burn cannot keep rising forever outside the data. Below the
+     bottom price the segment continues as-is (burn falls toward zero). Demand
+     never goes negative. */
   function alongSegment(left, right, p) {
     var span = Math.log(right.price / left.price);
     if (!(span > 0) || !(p > 0)) return Math.max(0, left.qty);
@@ -128,19 +130,18 @@
     return -Math.log(right.qty / left.qty) / Math.log(right.price / left.price);
   }
 
-  function extrapolateEnd(left, right, p, atHighEnd) {
+  function extrapolateHigh(left, right, p) {
     var e = segmentElasticity(left, right);
     if (e == null || e >= 1 - 1e-12) return alongSegment(left, right, p);
-    if (atHighEnd) return right.qty * (right.price / p);
-    return left.qty * (left.price / p);
+    return right.qty * (right.price / p);
   }
 
   function demandAt(knots, p) {
     if (!(p > 0) || !knots.length) return 0;
     if (knots.length === 1) return Math.max(0, knots[0].qty);
-    if (p <= knots[0].price) return extrapolateEnd(knots[0], knots[1], p, false);
+    if (p <= knots[0].price) return alongSegment(knots[0], knots[1], p);
     var last = knots[knots.length - 1];
-    if (p >= last.price) return extrapolateEnd(knots[knots.length - 2], last, p, true);
+    if (p >= last.price) return extrapolateHigh(knots[knots.length - 2], last, p);
     for (var i = 0; i < knots.length - 1; i++) {
       var left = knots[i];
       var right = knots[i + 1];
